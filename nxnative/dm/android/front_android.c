@@ -635,7 +635,6 @@ int dm_menu_state(void) {
         return OVC_ST | (atomic_load(&g_ch_hi) + 1) << 4 | ((atomic_load(&g_ch_ver) + hv) & 255) << 20;
     }
     return atomic_load(&g_set_overlay) | atomic_load(&g_set_rumble) << 1 | (dm_opmode() != 0) << 2 | atomic_load(&g_set_fps) << 3 | (atomic_load(&g_menu_hi) + 1) << 4 |
-return atomic_load(&g_set_overlay) | atomic_load(&g_set_rumble) << 1 | (dm_opmode() != 0) << 2 | atomic_load(&g_set_fps) << 3 | (atomic_load(&g_menu_hi) + 1) << 4 |
            (atomic_load(&g_menu_tab) & 1) << 8 | (atomic_load(&g_menu_tab) >> 1 & 1) << 28 | (atomic_load(&g_menu_tab) >> 2 & 1) << 29 |
            (atomic_load(&g_set_opacity) - OV_OPACITY_MIN) / 5 << 9 | (atomic_load(&g_set_sharp) / 25) << 13 |
            (atomic_load(&g_sv_st) & 7) << 20 | (atomic_load(&g_sv_n) & 15) << 24 | atomic_load(&g_set_sr) << 23 | pad_labels() << 30;
