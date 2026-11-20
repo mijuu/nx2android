@@ -746,13 +746,23 @@ static void ov_fps_graph(VkCommandBuffer cb, float x0, float x1, float y0, float
     ov_fps_blk(cb, SP_GREY, x0, ly - t / 2, x1, ly + t / 2, 0.85f);
 }
 static void ov_fps(VkCommandBuffer cb, int64_t now) {   // one value a row: FPS, then the chip's and the battery's temperature where the device gives them, the driver
-    static uint64_t n0; static int64_t t0; static int fps = -1;
-    uint64_t n = atomic_load(&g_fps_frames);
-    if (!t0 || now - t0 > 2000000000ll) { t0 = now; n0 = n; fps = -1; }   // the first frame, or after a pause in the presents (the menu, the background): measure anew
-    else if (now - t0 >= 500000000ll) { fps = (int)((double)(n - n0) * 1e9 / (double)(now - t0) + 0.5); t0 = now; n0 = n; }
-    int o = dm_fps_opts(), want = fpso_rows(o);
-    char rows[4][32]; int nr = 0, hot[4] = {0};
-    if (want & FPSO_FPS) { if (fps < 0) snprintf(rows[nr++], 32, "FPS --"); else snprintf(rows[nr++], 32, "FPS %d", fps > 999 ? 999 : fps); }
+    static uint64_t n0, p0; static int64_t t0; static int fps = -1, pfps = -1;
+    uint64_t n = atomic_load(&g_fps_frames), shown = g_real_presented + g_generated_presented;   // shown: hand-overs (generated midpoints too)
+    if (!t0 || now - t0 > 2000000000ll) { t0 = now; n0 = n; p0 = shown; fps = pfps = -1; }   // the first frame, or after a pause in the presents (the menu, the background): measure anew
+    else if (now - t0 >= 500000000ll) {
+        double sec = (double)(now - t0) / 1e9;
+        fps = (int)((double)(n - n0) / sec + 0.5);
+        pfps = shown > p0 ? (int)((double)(shown - p0) / sec + 0.5) : -1;
+        t0 = now; n0 = n; p0 = shown;
+    }
+    int o = dm_fps_opts(), want = fpso_rows(o), fg_on = dm_framegen_enabled();
+    char rows[6][32]; int nr = 0, hot[6] = {0};
+    if (want & FPSO_FPS) {   // with frame generation: the game's own rate (RENDER) and what the display gets (DISPLAY from display times, else PRESENT)
+        const char *name = fg_on ? "RENDER" : "FPS"; int v = fps;
+        if (v < 0) snprintf(rows[nr++], 32, "%s --", name); else snprintf(rows[nr++], 32, "%s %d", name, v > 999 ? 999 : v);
+        if (fg_on) { const char *wn = framegen_display_clock() ? "DISPLAY" : "PRESENT";
+            if (pfps < 0) snprintf(rows[nr++], 32, "%s --", wn); else snprintf(rows[nr++], 32, "%s %d", wn, pfps > 999 ? 999 : pfps); }
+    }
     int soc = -1000, bat = -1000; if (want & (FPSO_SOC | FPSO_BAT)) dm_android_temps(&soc, &bat);   // front_android.c: the chip's hottest CPU / GPU zone and the battery, whole degrees C (-1000: not known)
     // red from where it is dangerously hot: the chip at 80 C (phones throttle hard in the high 80s), the battery at 45 C (Android's warnings and charging limits)
     if ((want & FPSO_SOC) && soc > -100 && soc < 1000) { hot[nr] = soc >= 80; snprintf(rows[nr++], 32, "SOC %dC", soc); }
