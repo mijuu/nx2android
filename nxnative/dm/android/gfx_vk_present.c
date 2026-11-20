@@ -256,7 +256,7 @@ static void barrier(VkCommandBuffer cb, VkImage img, VkImageLayout from, VkImage
 // With a theme in the APK (overlay_theme.c), the gamepad is its sprites instead: an atlas per layout in a texture of its own (g_tt), uploaded once, every
 // control drawn from it on each present; the procedural layer is then only the menu's panel, the dimming and the counter.
 enum { SP_DISC = OV_N, SP_BLACK, SP_WHITE, SP_ACCENT, SP_GREEN, SP_AMBER, SP_RED, SP_GREY, SP_N };   // (black, white, accent: solid blocks, the dimming and the layout editor's frames; green, amber, red, grey: the frame-time graph's bars and target line)
-#define OV_FPS_CHARS "0123456789 FPS-CBATOURNIQM.DELGV"   // (the temperature rows: "SOC 52C", "BAT 38C"; the driver row: "TURNIP 27.0.0", "QCOM 512.676.53", "NVIDIA ...", "ID 1AB2 ...")
+#define OV_FPS_CHARS "0123456789 FPS-CBATOURNIQM.DELGVY"   // (Y: DISPLAY with frame generation)   // (the temperature rows: "SOC 52C", "BAT 38C"; the driver row: "TURNIP 27.0.0", "QCOM 512.676.53", "NVIDIA ...", "ID 1AB2 ...")
 static struct { VkImage img; VkDeviceMemory mem; VkImageView view; VkSampler samp; VkDescriptorSetLayout dsl; VkPipelineLayout layout; VkDescriptorPool pool; VkDescriptorSet set;
                 VkPipeline pipe; VkFormat pfmt; uint32_t w, h, sh, pw, ph, gh, gs, gl, cpr, pad; int fk; VkBuffer up; VkDeviceMemory upm; uint8_t *px; int uploaded, panel, pfo, pfg, lay, cver; float sp[SP_N][4];
                 VkRenderPass rp; VkFramebuffer fb[8]; VkImageView fbview[8]; VkExtent2D fbext[8]; } g_ov;
