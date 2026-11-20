@@ -11,6 +11,15 @@ typedef struct { int kind; float ax, x, y, w, h; uint64_t btn; const char *label
 #include "android_profile.h"
 static const ov_ctl OV_LAYOUTS[2][DM_AOV_N] = {{DM_AOV_TABLET}, {DM_AOV_PHONE}};
 #define OV_N DM_AOV_N
+// Touch sticks start at the finger's down point; the right stick has finer low-speed aiming.
+static inline void ov_touch_stick(float x, float y, float radius, int right, float *dx, float *dy) {
+    if (radius <= 0) { *dx = *dy = 0; return; }
+    float m = hypotf(x, y) / radius;
+    if (m <= 0.05f) { *dx = *dy = 0; return; }
+    float v = fminf((m - 0.05f) / 0.95f, 1.0f);
+    if (right) v *= 0.7f + 0.3f * v;
+    *dx = x / (m * radius) * v; *dy = y / (m * radius) * v;
+}
 // the layout in use: the phone's when the window is at least OV_PHONE_ASPECT wide for its height (a 20:9 phone is 2.2, a 16:10 tablet 1.6), else the tablet's
 #define OV_PHONE_ASPECT 1.9f
 static inline int ov_layout_for_size(int width, int height) { return height > 0 && (float)width / (float)height >= OV_PHONE_ASPECT; }
@@ -173,18 +182,21 @@ static inline int fpso_scale(int base, int size) { return size == FPSO_SMALL ? (
 // ---- the pause menu: a panel in the middle of the window: a row of tabs, the open tab's rows, and Resume. Everything is placed in a panel rectangle p
 // (x, y, width, height: the window's for touches, the raster's for drawing), so the touches and the drawing agree ----
 enum { OVM_OVERLAY, OVM_OPACITY, OVM_EDIT, OVM_RUMBLE, OVM_FPS, OVM_SR, OVM_SHARP, OVM_MODE, OVM_EXPORT, OVM_IMPORT, OVM_PAD, OVM_AUDIO,
+       OVM_ENABLE_CHEATS, OVM_CHEATS,
        OVM_ROW_FPS, OVM_ROW_SOC, OVM_ROW_BAT, OVM_ROW_DRV, OVM_ROW_GRAPH, OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE, OVM_RESUME, OVM_TAB, OVM_N };   // OVM_TAB: the tabs' row;
             // OVM_ROW_*: the counter's rows on or off; OVM_POS .. OVM_SIZE: its corner, colour, outline and size, one value on with each press (fpso_step below);
             // OVM_EDIT: the layout editor; OVM_MODE: handheld (performance) or docked (resolution); OVM_EXPORT, OVM_IMPORT: the save manager (saves_android.c);
             // OVM_SR: Super resolution (the present pass upscales the game's picture into a larger window); OVM_SHARP: its Sharpness slider (0 to 100 percent by 25);
-            // OVM_PAD: a controller's face buttons by their position or by their label (front_android.c pad_labels)
-#define OVM_TABS 4   // (a power of two: ov_menu_item decodes the tab)
+            // OVM_PAD: a controller's face buttons by their position or by their label (front_android.c pad_labels);
+            // OVM_ENABLE_CHEATS: the cheats master switch, OVM_CHEATS: the cheat list (both hle_cheats.c)
+#define OVM_TABS 5
 #define OVM_PER_TAB 6   // (a tab's rows: as many for every tab, the panel keeps its size; Audio output sits with the gamepad's settings)
 static const int OVM_TAB_ITEMS[OVM_TABS][OVM_PER_TAB] = {{OVM_OVERLAY, OVM_OPACITY, OVM_EDIT, OVM_RUMBLE, OVM_PAD, OVM_AUDIO},
                                                          {OVM_FPS, OVM_SR, OVM_SHARP, OVM_MODE, OVM_EXPORT, OVM_IMPORT},
                                                          {OVM_ROW_FPS, OVM_ROW_SOC, OVM_ROW_BAT, OVM_ROW_DRV, OVM_ROW_GRAPH, -1},
-                                                         {OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE, -1, -1}};
-static const char *const OVM_TAB_NAMES[OVM_TABS] = {"Gamepad", "Game", "Counter", "Style"};
+                                                         {OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE, -1, -1},
+                                                         {OVM_ENABLE_CHEATS, OVM_CHEATS, -1, -1, -1, -1}};
+static const char *const OVM_TAB_NAMES[OVM_TABS] = {"Gamepad", "Game", "Counter", "Style", "Cheats"};
 #define OVM_ROWS (OVM_PER_TAB + 2)   // the tabs, a tab's rows (as many for every tab: the panel keeps its size), Resume
 static inline int fpso_step(int o, int item) {   // the options after a press on a menu item: a row's bit flips, the others go to their next value (and round)
     int r = fpso_rows(o), p = fpso_pos(o), c = fpso_colour(o), l = fpso_outline(o), z = fpso_size(o);
@@ -204,7 +216,7 @@ static inline int fpso_step(int o, int item) {   // the options after a press on
 }
 int dm_menu_audio_available(void);
 static inline int ov_menu_item(int tab, int row) {
-    int item = row == 0 ? OVM_TAB : row == OVM_ROWS - 1 ? OVM_RESUME : row > 0 && row < OVM_ROWS - 1 ? OVM_TAB_ITEMS[tab & (OVM_TABS - 1)][row - 1] : -1;
+int item = row == 0 ? OVM_TAB : row == OVM_ROWS - 1 ? OVM_RESUME : row > 0 && row < OVM_ROWS - 1 ? OVM_TAB_ITEMS[tab % OVM_TABS][row - 1] : -1;
     return item == OVM_AUDIO && !dm_menu_audio_available() ? -1 : item;
 }
 #define OV_MENU_ROW 0.115f   // row height, of the window's height
@@ -213,12 +225,13 @@ static inline int ov_menu_item(int tab, int row) {
 #define OV_OPACITY_MIN 20    // the gamepad's opacity, percent (the Opacity slider, settings.txt opacity=)
 #define OV_OPACITY_MAX 80
 // what the menu shows (-1 = closed): bit 0 the gamepad is on, bit 1 rumble is on, bit 2 docked, bit 3 the frame rate shown, bits 4..7 the highlighted row + 1
-// (0 = none), bit 8 the open tab's first bit and bit 19 its second (the Counter and Style tabs), bits 9..12 the opacity as steps of 5 from OV_OPACITY_MIN,
-// bits 13..15 the sharpness in 25 percent steps, bit 23 the super resolution is on, bits 20..22 the last export's outcome (OVX_*), bits 24..27 a count of
-// exports (its name changes with each), bit 28 the face buttons by label, bits 29..30 a count of the counter options' changes (dm_fps_opts: the panel shows
-// them); bit 31 is never set (a negative state reads as "no menu", which is how a closed one is named). Bit 16: the text entry's panel instead (its edit
-// count below); bit 17: the layout editor (OVE_ST_* below); bit 18: the save picker (OVS_ST)
-#define OVT_ST 0x10000   // the mode bits of dm_menu_state, one each: OVT_ST the text entry, OVE_ST the layout editor, OVS_ST the save picker (tests/test_menu_bits.py)
+// what the menu shows (-1 = closed): bit 0 the gamepad is on, bit 1 rumble is on, bit 2 docked, bit 3 the frame rate shown, bits 4..7 the highlighted row + 1
+// (0 = none), bits 9..12 the opacity as steps of 5 from OV_OPACITY_MIN, bits 13..15 the sharpness in 25 percent steps, bits 20..22 the last export's
+// outcome (OVX_*), bits 24..27 a count of exports (its name changes with each), bit 23 the super resolution is on, bit 30 the face buttons by label, and the
+// open tab in bits 8, 28 and 29 (five tabs; tests/test_menu_bits.py). Bit 16: the text entry's panel instead (its edit count below); bit 17: the layout
+// editor (OVE_ST_* below); bit 18: the save picker (OVS_ST); bit 19: the cheats picker (OVC_ST); never bit 31 (a negative state reads as "no menu", which
+// is how a closed one is named)
+#define OVT_ST 0x10000   // the mode bits of dm_menu_state, one each: OVT_ST the text entry, OVE_ST the layout editor, OVS_ST the save picker, OVC_ST the cheats picker (tests/test_menu_bits.py)
 int dm_menu_state(void);
 enum { OVX_IDLE, OVX_BUSY, OVX_DONE, OVX_NOSAVE, OVX_FAILED };   // Export save: the button; copying; the export's name; the game has not saved yet; failed
 int dm_save_note(char *out, int cap);   // front_android.c: the outcome (OVX_*) and the last export's name, or why it failed
@@ -282,9 +295,19 @@ static inline int ov_ed_button_at(float x, float y, const float p[4], int first,
 // saves/ newest first, OVM_ROWS - 2 to a page (left and right page), then the confirmation, then the note that the game closes. dm_menu_state: bit 18, bits 4..7
 // the highlighted row + 1, bits 20..27 the picker's edit count (a page, a confirmation) ----
 #define OVS_ST 0x40000
-enum { OVS_EMPTY, OVS_TITLE, OVS_ITEM, OVS_NOTE, OVS_BUTTON, OVS_BACK };   // a row: nothing; the title (left) and the page (right); a save (its name, its size);
-typedef struct { int style; char left[80], right[40]; } ov_srow;            // a line of text; a button (the import); Back or Cancel, centred as Resume is
+enum { OVS_EMPTY, OVS_TITLE, OVS_ITEM, OVS_MASTER, OVS_NOTE, OVS_BUTTON, OVS_BACK };   // a row: nothing; the title (left) and the page (right); a save (its name, its size);
+                                                                                         // a master cheat (its own size: its long title must not shrink the page's rows); a line of text;
+                                                                                         // a button (the import); Back or Cancel, centred as Resume is
+typedef struct { int style; char left[80], right[40]; } ov_srow;
 int dm_save_rows(ov_srow rows[OVM_ROWS]);   // front_android.c: the picker's rows, 0 when it is not open
+
+// ---- the cheats picker (front_android.c, from the menu's Cheats tab): the same panel, one row per cheat of the running build's Atmosphère file (hle_cheats.c),
+// OVM_ROWS - 2 to a page (left and right, L and R, a tap on the title row's page arrows or a sideways swipe page), its name and on / off state, then Back.
+// The master switch is the menu's own Enable cheats row (OVM_ENABLE_CHEATS), above the list: every launch starts with it off, one tap runs the saved set,
+// turning it off puts back the code words the passes changed, and the title says "(off)" while it is. dm_menu_state: bit 19, bits 4..7 the highlighted row + 1,
+// bits 20..27 the picker's edit count (a toggle, a page, the host's cheat states) ----
+#define OVC_ST 0x80000
+int dm_cheat_rows(ov_srow rows[OVM_ROWS]);   // front_android.c: the picker's rows, 0 when it is not open
 
 // ---- the text entry's keyboard (front_android.c front_text_input, drawn by gfx_vk_present.c ov_text_panel), in the pause menu's panel rectangle ----
 // Four rows of ten character keys and a row of four wide ones; p is the panel's rectangle (x, y, width, height: the window's for touches, the raster's for drawing).

@@ -46,6 +46,9 @@ static void flags_init(void) {
 }
 
 // Zero point of the boot timeline = process creation time (p_starttime from sysctl KERN_PROC_PID, wall clock) converted to the now_ns monotonic time base; same definition on Mac / iOS
+// Seconds since process start for the log's timestamp: g_t0_ns is set once by host_preload below, so this is two memory reads,
+// where proc_start_mono_ns() walks /proc through the sysctl shim on Android for every line
+double dm_log_elapsed(void) { return (double)(now_ns() - g_t0_ns) / 1e9; }
 static uint64_t proc_start_mono_ns(void) {
     struct kinfo_proc kp; size_t n = sizeof kp; int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()};
     uint64_t mono = now_ns(); struct timeval tv; gettimeofday(&tv, NULL);
@@ -96,6 +99,7 @@ static void host_preload(int argc, char **argv) {
       if (e && *e) { char *s = strdup(e); for (char *t = strtok(s, " "); t && g_argc < 63; t = strtok(NULL, " ")) g_argv[g_argc++] = t; LOG("game arguments added by DM_GAME_ARGS_ADD: %s", e); } }
     if (!n) { static const char *def[] = DM_GAME_MODULES; for (int k = 0; k < DM_GAME_NMOD && n < MAX_MOD; k++) names[n++] = def[k]; }   // default module list from the game profile's modules (Mario: main sdk)
     load_modules(argv[1], names, n);
+    dm_cheats_init();   // the Atmosphère cheat files for this build (hle_cheats.c): picked by first 16 hex digits of main's build ID, which the loader knows now
     dm_sdk_major();   // logs the SDK version, which SDK-dependent behaviour follows (loader.c)
     uint64_t ta = now_ns();
     probe_install();   // DM_PROBE probes (for diagnostics)

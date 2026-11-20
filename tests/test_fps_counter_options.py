@@ -1,4 +1,4 @@
-"""The Android frame rate counter's options: the menu table (4 tabs), the settings.txt keys and the packed state."""
+"""The Android frame rate counter's options: the menu table (five tabs), the settings.txt keys and the packed state."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -26,7 +26,7 @@ class FpsCounterOptions(unittest.TestCase):
 #include <stdlib.h>
 #include <string.h>
 #include "overlay_layout.h"
-static _Atomic int g_fps_opts = FPSO_DEFAULT, g_fps_ver;
+static _Atomic int g_fps_opts = FPSO_DEFAULT;
 int dm_menu_audio_available(void) { return 1; }
 float dm_overlay_scale(void) { return 1; }
 int dm_overlay_off(int l, int c) { (void)l; (void)c; return 0; }
@@ -35,11 +35,11 @@ int dm_overlay_custom(int l, int c, float *x, float *y, float *s) { (void)l; (vo
 static int parse(const char *line) { return fps_opt_parse(line); }
 int main(int argc, char **argv) {
     assert(argc == 2);   // a scratch file in the test's own folder (tmpfile() on MinGW with msvcrt makes it in the drive's root)
-    // four tabs, six rows each (as many for every tab: the panel keeps its size); the Counter tab: the five rows (FPS, SOC, BAT, driver, graph)
-    // then a blank; the Style tab: the four choices then two blanks
-    assert(OVM_TABS == 4 && OVM_PER_TAB == 6 && OVM_ROWS == 8);
+    // five tabs, six rows each (as many for every tab: the panel keeps its size); the Counter tab: the five rows (FPS, SOC, BAT, driver, graph)
+    // then a blank; the Style tab: the four choices then two blanks; the Cheats tab its two rows
+    assert(OVM_TABS == 5 && OVM_PER_TAB == 6 && OVM_ROWS == 8);
     assert(ov_menu_item(0, 0) == OVM_TAB && ov_menu_item(3, 7) == OVM_RESUME);
-    assert(ov_menu_item(1, 1) == OVM_FPS && ov_menu_item(0, 6) == OVM_AUDIO && ov_menu_item(1, 5) == OVM_EXPORT);
+    assert(ov_menu_item(1, 1) == OVM_FPS && ov_menu_item(0, 6) == OVM_AUDIO && ov_menu_item(1, 5) == OVM_EXPORT && ov_menu_item(4, 1) == OVM_ENABLE_CHEATS);
     const int counter[5] = {OVM_ROW_FPS, OVM_ROW_SOC, OVM_ROW_BAT, OVM_ROW_DRV, OVM_ROW_GRAPH}, style[5] = {OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE, -1};
     for (int r = 0; r < 5; r++) { assert(ov_menu_item(2, r + 1) == counter[r]); assert(ov_menu_item(3, r + 1) == style[r]); }
     assert(ov_menu_item(2, 6) == -1 && ov_menu_item(3, 5) == -1 && ov_menu_item(3, 6) == -1);
@@ -72,9 +72,9 @@ int main(int argc, char **argv) {
     atomic_store(&g_fps_opts, FPSO_DEFAULT);
     for (char *l = strtok(buf, "\n"); l; l = strtok(NULL, "\n")) { char line[64]; snprintf(line, sizeof line, "%s\n", l); assert(parse(line)); }
     assert(atomic_load(&g_fps_opts) == fpso_pack(5, 2, 3, 2, 3));
-    // the menu presses: a row's bit flips, the choices go round, each change counts
+    // the menu presses: a row's bit flips, the choices go round
     atomic_store(&g_fps_opts, FPSO_DEFAULT);
-    assert(fps_opt_press(OVM_ROW_SOC) && fpso_rows(atomic_load(&g_fps_opts)) == 5 && atomic_load(&g_fps_ver) == 1);
+    assert(fps_opt_press(OVM_ROW_SOC) && fpso_rows(atomic_load(&g_fps_opts)) == 5);
     assert(fps_opt_press(OVM_ROW_SOC) && fpso_rows(atomic_load(&g_fps_opts)) == 7);
     assert(fps_opt_press(OVM_ROW_GRAPH) && fpso_rows(atomic_load(&g_fps_opts)) == 23 && fpso_pos(atomic_load(&g_fps_opts)) == FPSO_TL);   // (the bit does not reach the corner)
     assert(fps_opt_press(OVM_ROW_GRAPH) && fpso_rows(atomic_load(&g_fps_opts)) == 7);

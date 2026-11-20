@@ -1,17 +1,18 @@
-# The nx2android desktop app: four tabs over porter.
+# The nx2android desktop app: five tabs over porter.
 #   Port   pick the game folder (porter inspect), options, Port (porter port --progress json): the stage list, the current stage's bar, the log; then open or install the result
 #   Setup  the tools a port needs (porter doctor), downloading the missing ones (porter tools --download), and the saved settings (porter.config): prod.keys, the NDK,
 #          dotnet, adb, the output folder, the device
 #   Games  the game profiles (porter profiles --all)
 #   Saves  a ported game's save between the device and the PC (porter saves): the save folders on the device, a fresh export to a folder here, an import of a
 #          folder or .zip (a console's save, or an export)
+#   Cheats Atmosphère cheat files for a ported game (porter cheats): the files in the app's cheats folder and the install of one for the build it runs
 import html, os, subprocess, sys, time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-                               QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QSplitter, QStyle, QTableWidget, QTableWidgetItem,
+                               QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSpinBox, QSplitter, QStyle, QTableWidget, QTableWidgetItem,
                                QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from porter import config
@@ -33,14 +34,14 @@ def size(b):
 
 
 def path_row(edit, pick):   # a line edit with a Browse button
-    w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0, 0, 0, 0)
+    w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0, 0, 0, 0); h.setAlignment(Qt.AlignTop)
     b = QPushButton('Browse…'); b.clicked.connect(pick)
     h.addWidget(edit, 1); h.addWidget(b)
     return w
 
 
 def with_info(field, tip):   # a field with the style's information icon after it, which shows tip on hover (the field shows it too)
-    w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0, 0, 0, 0)
+    w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0, 0, 0, 0); h.setAlignment(Qt.AlignTop)
     i = QLabel(); i.setPixmap(QApplication.style().standardIcon(QStyle.SP_MessageBoxInformation).pixmap(16, 16)); i.setCursor(Qt.WhatsThisCursor)
     i.setToolTip(tip); field.setToolTip(tip)
     h.addWidget(field); h.addWidget(i); h.addStretch(1)
@@ -48,6 +49,25 @@ def with_info(field, tip):   # a field with the style's information icon after i
 
 
 # ---------------- Port ----------------
+class FitScroll(QScrollArea):
+    """A scroll area as tall as its rows: it never takes more height than they need (the log below gets the rest) and scrolls only when the window is too short for them"""
+    def fit(self):
+        if w := self.widget(): self.setMaximumHeight(w.sizeHint().height() + 2 * self.frameWidth()); self.updateGeometry()
+
+    def sizeHint(self):
+        s, w = super().sizeHint(), self.widget()
+        return QSize(s.width(), w.sizeHint().height() + 2 * self.frameWidth()) if w else s
+
+
+def sd_warning():   # right of the Port tab's "Game data on the SD card" box
+    w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0, 0, 0, 0); h.setSpacing(4)
+    i = QLabel(); i.setPixmap(QApplication.style().standardIcon(QStyle.SP_MessageBoxWarning).pixmap(16, 16))
+    t = QLabel('<b>Slow</b> to install and uninstall'); t.setTextFormat(Qt.RichText)
+    w.setToolTip('Installing writes many GB to the SD card and uninstalling deletes them again; internal storage is much faster.')
+    h.addWidget(i); h.addWidget(t); w.setVisible(False)
+    return w
+
+
 class PortTab(QWidget):
     def __init__(self, win):
         super().__init__()
@@ -63,7 +83,7 @@ class PortTab(QWidget):
         gl.addWidget(self.card)
         v.addWidget(g)
 
-        o = QGroupBox('Options'); f = QFormLayout(o)
+        o = QGroupBox('Options'); inner = QWidget(); f = QFormLayout(inner)   # the title stays put; only the rows scroll
         self.app_name = QLineEdit(); self.app_name.setPlaceholderText('the game\'s name')
         self.language = QComboBox()
         for code, name in LANGUAGES: self.language.addItem(name, code)
@@ -76,8 +96,11 @@ class PortTab(QWidget):
         self.romfs_at = QLineEdit(); self.romfs_at.setPlaceholderText('as the device has it (an earlier install\'s folder, else the app\'s files folder)')   # porter install --romfs-at
         romfs_tip = ('A folder on the device that already holds this game version\'s RomFS (a dump an emulator reads, e.g. /sdcard/<dump>/romfs),\n'
                      'which the app then reads instead of a copy in its own files folder (7 to 18 GB less). The installer checks the folder and gives the app All files access.\n'
-                     'Empty: as the device has it. "app": the RomFS back in the app\'s files folder. Install only: the port itself does not change.')
+                     'Empty: as the device has it (an SD install\'s card folder too). "app": the RomFS back in the app\'s files folder (from the SD card too). Install only: the port itself does not change.')
         self.romfs_push = QCheckBox('Push the game\'s RomFS into that folder (an empty folder, or one of this game: files are added, never deleted)')   # porter install --romfs-push
+        self.romfs_sd = QCheckBox('Game data on the SD card (the app itself stays in internal storage; the bulky RomFS is stored on the SD card)')   # porter install --romfs-at sd
+        self.romfs_sd_warn = sd_warning()   # shown while the SD checkbox is on
+        self.romfs_sd.toggled.connect(lambda on: (self.romfs_at.setEnabled(not on), self.romfs_push.setEnabled(not on), self.romfs_sd_warn.setVisible(on)))
         romfs = with_info(self.romfs_at, romfs_tip); romfs.layout().setStretch(0, 1)
         self.package = QLineEdit(); self.package.setPlaceholderText('the profile\'s package')   # porter port --package: a test install beside the player's other build
         self.package.setToolTip('Install under another package than the profile\'s (org.nx2a.<game>.test), beside your other build of the game.\n'
@@ -107,11 +130,15 @@ class PortTab(QWidget):
                              'Raise it (16, 24 …) if the game still runs out. It uses no memory and does not change the speed.')
         f.addRow('App name', self.app_name); f.addRow('Game language', self.language)
         f.addRow('Output folder', path_row(self.out, self.pick_out)); f.addRow('Device', dev); f.addRow('', self.replace_signer)
-        f.addRow('RomFS on the device', romfs); f.addRow('', self.romfs_push)
+        f.addRow('RomFS on the device', romfs); f.addRow('', self.romfs_push); sd_row = QWidget(); sr = QHBoxLayout(sd_row); sr.setContentsMargins(0, 0, 0, 0); sr.addWidget(self.romfs_sd); sr.addWidget(self.romfs_sd_warn); sr.addStretch(1)
+        f.addRow('', sd_row)
         f.addRow('Package', self.package); f.addRow('versionCode offset', self.vercode); f.addRow('Extra address space', headroom)
         f.addRow('Vulkan driver', path_row(self.driver, self.pick_driver))
         f.addRow('System font', path_row(self.shared_font, self.pick_shared_font))
         f.addRow('', self.fps60); f.addRow('', self.touch); f.addRow('', self.no_menu_button); f.addRow('', self.mt_replay); f.addRow('', self.debug); f.addRow('', self.experimental)
+        scroll = FitScroll(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame); scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setMinimumHeight(120); scroll.setWidget(inner); scroll.fit()   # the options scroll only when the window is too short for them, so the tab fits a 1080p screen
+        ol = QVBoxLayout(o); ol.setContentsMargins(0, 0, 0, 0); ol.addWidget(scroll)
         v.addWidget(o)
 
         bar = QHBoxLayout()
@@ -234,7 +261,8 @@ class PortTab(QWidget):
         self.run(args + self.romfs_args())
 
     def romfs_args(self):   # porter install --romfs-at / --romfs-push (porter/install.py)
-        return (['--romfs-at', self.romfs_at.text().strip()] if self.romfs_at.text().strip() else []) + (['--romfs-push'] if self.romfs_push.isChecked() else [])
+        if self.romfs_sd.isChecked(): return ['--romfs-at', 'sd']
+        return (['--romfs-at', self.romfs_at.text().strip()] if self.romfs_at.text().strip() else []) + (['--romfs-push'] if self.romfs_push.isChecked() else [])   # empty: as the device has it (an SD install's card folder too); "app" brings the RomFS back from the card
 
     def run(self, args):
         self.stages.clear(); self.items = {}; self.log.clear(); self.prog.setValue(0); self.step.setText('starting…')
@@ -510,13 +538,87 @@ class SavesTab(QWidget):
         call_json(self, ['saves', 'import', src, '--package', self.pkg(), '--json'], self.done('the import'))
 
 
+# ---------------- Cheats ----------------
+class CheatsTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.busy = None
+        v = QVBoxLayout(self)
+        lab = QLabel('Atmosphère cheat files for a ported game. The game reads <code>Android/data/&lt;package&gt;/files/cheats/&lt;build ID&gt;.txt</code> and lists its entries in '
+                     'the pause menu (<b>Cheats → Cheat list</b>), where they are turned on and off; its <b>Enable cheats</b> switch starts off every launch and runs the saved set. '
+                     'A file is installed for the build the app on the device runs; '
+                     'a game update changes the build, so a file for another build is refused. Code cheats apply on Android too; a cheat that would overwrite an instruction '
+                     'the rewriter changed stays off and shows as unsupported. Cheat files are yours: this tab copies one over adb, it never downloads or ships one.')
+        lab.setWordWrap(True); lab.setTextFormat(Qt.RichText); v.addWidget(lab)
+        row = QHBoxLayout(); self.app = QComboBox(); self.app.currentIndexChanged.connect(self.refresh)
+        r = QPushButton('Refresh'); r.clicked.connect(self.load_apps)
+        row.addWidget(QLabel('Game on the device:')); row.addWidget(self.app, 1); row.addWidget(r); v.addLayout(row)
+        self.table = QTableWidget(0, 4); self.table.setHorizontalHeaderLabels(['Cheat file', 'Build', 'Size', 'On'])
+        self.table.verticalHeader().setVisible(False); self.table.setEditTriggers(QTableWidget.NoEditTriggers); self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection); self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        v.addWidget(self.table, 1)
+        b = QHBoxLayout(); self.b_install = QPushButton('Install a cheat file…'); self.b_install.clicked.connect(self.install)
+        b.addWidget(self.b_install); v.addLayout(b)
+        self.status = QLabel(''); self.status.setWordWrap(True); v.addWidget(self.status)
+        self.load_apps()
+
+    def pkg(self): return self.app.currentData() or ''
+
+    def set_busy(self, msg, show=True):
+        if msg and show: self.status.setText(msg)
+        elif not msg and self.busy and self.status.text() == self.busy: self.status.setText('')
+        self.busy = msg
+        for w in (self.b_install, self.app): w.setEnabled(not msg and (w is self.app or bool(self.pkg())))
+
+    def load_apps(self):
+        def got(rows, code):
+            cur = self.pkg(); self.app.blockSignals(True); self.app.clear()
+            for pk in rows if isinstance(rows, list) else []: self.app.addItem(pk, pk)
+            if not self.app.count(): self.app.addItem('no ported game on the device', '')
+            i = self.app.findData(cur); self.app.setCurrentIndex(max(i, 0)); self.app.blockSignals(False)
+            self.set_busy(None); self.refresh()
+            if not isinstance(rows, list): self.status.setText(f'[RED] {(rows or {}).get("error", "porter cheats apps failed")}')
+        self.set_busy('looking for the device…'); call_json(self, ['cheats', 'apps', '--json'], got)
+
+    def refresh(self, show=True):
+        self.table.setRowCount(0)
+        if not self.pkg(): return
+        def got(res, code):
+            self.set_busy(None)
+            if not isinstance(res, dict) or res.get('error'): self.status.setText(f'[RED] {(res or {}).get("error", "porter cheats list failed")}'); return
+            rows = res.get('files') or []; self.table.setRowCount(len(rows))
+            for i, r in enumerate(rows):
+                cells = (r['name'], r['build'] + ('  (this build)' if r['current'] else ''), size(r['bytes']), f'{r["enabled"]} on')
+                for j, c in enumerate(cells):
+                    it = QTableWidgetItem(c); it.setData(Qt.UserRole, r['name']); self.table.setItem(i, j, it)
+            if not rows: self.status.setText(f'No cheat files in {res.get("folder", "the app's cheats folder")} yet: install one, or put a <build ID>.txt there over adb.')
+            else: self.status.setText(f'Build {res["build"]}, {res["folder"]}: open the pause menu\'s Cheats to turn them on. A game restart is not needed.')
+        self.set_busy('reading the cheat files…', show); call_json(self, ['cheats', 'list', '--package', self.pkg(), '--json'], got)
+
+    def done(self, what):
+        def got(res, code):
+            self.set_busy(None)
+            if code or not isinstance(res, dict) or res.get('error'): self.status.setText(f'[RED] {what} failed: {(res or {}).get("error", "see porter cheats for the reason")}')
+            else: self.status.setText(f'{res.get("file")} installed for build {res.get("build")}' + (f'; the old file is {res["backup"]}' if res.get('backup') else '') + '.')
+            if not code: self.refresh(show=False)
+        return got
+
+    def install(self):
+        src = QFileDialog.getOpenFileName(self, 'The cheat file (Atmosphère format)', '', 'Cheat files (*.txt)')[0]
+        if not src: return
+        if QMessageBox.question(self, 'Install the cheat file', f'{Path(src).name} is copied to {self.pkg()}\'s cheats folder on the device, named for the build it runs. '
+                                'An old file of that name is kept as .bak. The pause menu reads it when it opens. Go on?') != QMessageBox.Yes: return
+        self.set_busy(f'installing {Path(src).name}…')
+        call_json(self, ['cheats', 'install', src, '--package', self.pkg(), '--json'], self.done('the install'))
+
+
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('nx2android'); self.resize(980, 820)
+        self.setWindowTitle('nx2android'); self.resize(997, 820)
         self.tabs = QTabWidget()
-        self.port = PortTab(self); self.setup = SetupTab(self); self.games = GamesTab(); self.saves = SavesTab()
-        self.tabs.addTab(self.port, 'Port'); self.tabs.addTab(self.setup, 'Setup'); self.tabs.addTab(self.games, 'Games'); self.tabs.addTab(self.saves, 'Saves')
+        self.port = PortTab(self); self.setup = SetupTab(self); self.games = GamesTab(); self.saves = SavesTab(); self.cheats = CheatsTab()
+        self.tabs.addTab(self.port, 'Port'); self.tabs.addTab(self.setup, 'Setup'); self.tabs.addTab(self.games, 'Games'); self.tabs.addTab(self.saves, 'Saves'); self.tabs.addTab(self.cheats, 'Cheats')
         self.setCentralWidget(self.tabs)
         self.first = True
 
