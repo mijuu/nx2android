@@ -21,6 +21,8 @@ class OverlayLayout(unittest.TestCase):
 #include "overlay_layout.h"
 static int custom_faces, custom_a, custom_x, hidden_ctl = -1, audio_available;
 int dm_menu_audio_available(void) { return audio_available; }
+static int import_available;
+int dm_menu_lossless_import_available(void) { return import_available; }
 float dm_overlay_scale(void) { return 1; }
 int dm_overlay_off(int l, int c) { return l == 1 && c == hidden_ctl; }
 int dm_overlay_custom(int layout, int ctl, float *x, float *y, float *s) {
@@ -88,14 +90,20 @@ int main(void) {
     assert(ov_drag_pos(1100, 600, 1013, 50) == 506.5f);
     assert(ov_drag_pos(1100, 505, 1013, 50) == 508);
 
-// Six rows a tab: the gamepad's settings then the audio picker (a device may not offer it), the Game tab the picture's and the save's, the Cheats tab its picker
+// Nine rows a tab: the gamepad's settings then the audio picker (a device may not offer it), the Game tab the picture's, the save's and the frame generation's, the Cheats tab its picker
     assert(ov_menu_item(0, OVM_ROWS - 1) == OVM_RESUME);
-    assert(ov_menu_item(1, 1) == OVM_FPS && ov_menu_item(1, 2) == OVM_SR && ov_menu_item(1, 3) == OVM_SHARP && ov_menu_item(1, OVM_ROWS - 2) == OVM_IMPORT);
+    assert(ov_menu_item(1, 1) == OVM_FPS && ov_menu_item(1, 2) == OVM_SR && ov_menu_item(1, 3) == OVM_SHARP && ov_menu_item(1, 6) == OVM_IMPORT);
+    import_available = 1;
+    assert(ov_menu_item(1, 7) == OVM_FRAMEGEN && ov_menu_item(1, 8) == OVM_FG_TARGET && ov_menu_item(1, 9) == OVM_FG_IMPORT);
     assert(ov_menu_item(4, 1) == OVM_ENABLE_CHEATS && ov_menu_item(4, 2) == OVM_CHEATS && ov_menu_item(4, 3) == -1 && ov_menu_item(4, OVM_ROWS - 2) == -1 && ov_menu_item(4, OVM_ROWS - 1) == OVM_RESUME);
     audio_available = 0;
-    assert(ov_menu_item(0, OVM_ROWS - 2) == -1);
+    assert(ov_menu_item(0, 6) == -1);
     audio_available = 1;
-    assert(ov_menu_item(0, OVM_ROWS - 2) == OVM_AUDIO && ov_menu_item(0, OVM_ROWS - 3) == OVM_PAD);
+    assert(ov_menu_item(0, 6) == OVM_AUDIO && ov_menu_item(0, 5) == OVM_PAD);
+    import_available = 0;
+    assert(ov_menu_item(1, 9) == -1);
+    import_available = 1;
+    assert(ov_menu_item(1, 9) == OVM_FG_IMPORT);
 float tp[4], tr[4]; ov_menu_rect(2400, 1080, tp); ov_menu_rowrect(tp, 0, tr);
     assert(ov_menu_tab_at(tr[0] + tr[2] * 0.10f, tp) == 0 && ov_menu_tab_at(tr[0] + tr[2] * 0.50f, tp) == 2 && ov_menu_tab_at(tr[0] + tr[2] * 0.90f, tp) == 4);
     const float screens[][2] = {{915, 412}, {1216, 760}, {2400, 1080}, {1080, 2400}};
