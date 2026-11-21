@@ -808,6 +808,15 @@ else if (item == OVM_ENABLE_CHEATS) { dm_cheats_master_set(!dm_cheats_master());
     if (item >= 0 && item < OVM_N) dm_haptics_android_tap();
     if (item == OVM_RESUME) menu_close(); else dm_overlay_redraw();
 }
+const uint8_t *dm_overlay_font(void);   // overlay_theme.c (gfx_vk_present.c draws the rows with it)
+static int menu_switch(int it) {   // the rows whose right side is an ON/OFF switch (gfx_vk_present.c ov_menu_panel draws them)
+    return it == OVM_OVERLAY || it == OVM_RUMBLE || it == OVM_FPS || it == OVM_SR || it == OVM_FRAMEGEN || it == OVM_ENABLE_CHEATS || it == OVM_FG_IMPORT
+        || (it >= OVM_ROW_FPS && it <= OVM_ROW_GRAPH);
+}
+static float menu_switch_x(float W, float H, int row) {   // where the switch's status word begins: a tap to its right flips it, the name scrolls
+    float p[4], r[4]; ov_menu_rect(W, H, p); ov_menu_rowrect(p, row, r);
+    return r[0] + r[2] - r[3] * 0.10f - r[3] * 0.34f * 1.85f - r[3] * 0.30f - (float)(pf_width(dm_overlay_font(), "No DLL") * ov_menu_font(p));
+}
 static void menu_touch(AInputEvent *e, float W, float H) {   // a press on a row does it when it lifts there; a drag scrolls the rows; a tap outside the drawer or on the menu button closes
     int act = AMotionEvent_getAction(e) & AMOTION_EVENT_ACTION_MASK, ai = AMotionEvent_getAction(e) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
     int i = act == AMOTION_EVENT_ACTION_DOWN || act == AMOTION_EVENT_ACTION_UP ? 0 : ai, id = AMotionEvent_getPointerId(e, (size_t)i) & 31;
@@ -839,7 +848,10 @@ static void menu_touch(AInputEvent *e, float W, float H) {   // a press on a row
         int down = g_menu_row, moved = g_menu_scrolled; g_menu_ptr = -1; g_menu_scrolled = 0; atomic_store(&g_menu_hi, -1);
         if (moved) { dm_overlay_redraw(); return; }   // a scroll is not a tap
         if (down >= 0 && (item == OVM_OPACITY || item == OVM_SHARP)) { settings_save(); dm_overlay_redraw(); }
-        else if (row == down && item >= 0 && item != OVM_TAB) { if (row >= 1) menu_marq(row); menu_do(item); }   // a tapped row's text scrolls when it does not fit
+        else if (row == down && item >= 0 && item != OVM_TAB) {   // a switch flips by its ON/OFF; its name, tapped, scrolls when it does not fit
+            if (row >= 1 && menu_switch(item) && x < menu_switch_x(W, H, row)) menu_marq(row);
+            else { if (row >= 1) menu_marq(row); menu_do(item); }
+        }
         else if (row == down && (row == -2 || row == -3)) { dm_haptics_android_tap(); menu_close(); }
         else dm_overlay_redraw();
     } else if (act == AMOTION_EVENT_ACTION_CANCEL) { g_menu_ptr = -1; g_menu_scrolled = 0; atomic_store(&g_menu_hi, -1); dm_overlay_redraw(); }
@@ -866,7 +878,7 @@ static void menu_key(uint64_t bit) {   // a controller key pressed while the men
         if (atomic_load(&g_menu_scroll) > ov_menu_max_scroll(t2)) atomic_store(&g_menu_scroll, ov_menu_max_scroll(t2));
         if (hi > 0 && ov_menu_item(t2, hi, atomic_load(&g_menu_scroll)) < 0) atomic_store(&g_menu_hi, OVM_VIEW + 1);   // (the other tab has fewer rows: Resume)
     }
-    else if (bit == DM_BTN_A) { if (hi >= 1) menu_marq(hi); menu_do(hi < 0 ? OVM_RESUME : item); }
+    else if (bit == DM_BTN_A) menu_do(hi < 0 ? OVM_RESUME : item);
     else if (bit == DM_BTN_B || bit == DM_BTN_PLUS) menu_close();
 }
 
@@ -956,7 +968,7 @@ static void sp_touch(AInputEvent *e, float W, float H) {   // a row is done when
         if (sp_selectable(row)) { atomic_store(&g_sp_hi, row); sp_changed(); }
     } else if ((act == AMOTION_EVENT_ACTION_UP || act == AMOTION_EVENT_ACTION_POINTER_UP) && id == g_sp.ptr) {
         int down = g_sp.row; g_sp.ptr = -1;
-        if (row == down && row == -2) sp_back(); else if (row == down) { if (row >= 1) menu_marq(row); sp_do(row); }   // a tapped save's name scrolls when it does not fit
+        if (row == down && row == -2) sp_back(); else if (row == down) sp_do(row);
     } else if (act == AMOTION_EVENT_ACTION_CANCEL) g_sp.ptr = -1;
 }
 static void sp_size(char *out, int cap, const dm_save_entry *s) {
@@ -1053,7 +1065,11 @@ static void ch_key(uint64_t bit) {
     else if (bit == DM_BTN_A) ch_do(hi);
     else if (bit == DM_BTN_B || bit == DM_BTN_PLUS) ch_back();
 }
-static void ch_touch(AInputEvent *e, float W, float H) {   // a row toggles when the finger that went down on it lifts there; the title row's arrows or a sideways swipe page; outside the panel goes back
+static float ch_switch_x(float W, float H, int row) {   // where a row's ON/OFF begins (gfx_vk_present.c ov_rows_panel right-aligns it); "apply" is the widest selectable word
+    float p[4], r[4]; ov_menu_rect(W, H, p); ov_menu_rowrect(p, row, r);
+    return r[0] + r[2] - r[3] * 0.10f - (float)(pf_width(dm_overlay_font(), "apply") * ov_menu_font(p)) - r[3] * 0.12f;
+}
+static void ch_touch(AInputEvent *e, float W, float H) {   // a row's ON/OFF toggles it when the finger that lifts there is on it; its name tapped scrolls; the title row's arrows or a sideways swipe page; outside the panel goes back
     int act = AMotionEvent_getAction(e) & AMOTION_EVENT_ACTION_MASK, ai = AMotionEvent_getAction(e) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
     int i = act == AMOTION_EVENT_ACTION_DOWN || act == AMOTION_EVENT_ACTION_UP ? 0 : ai, id = AMotionEvent_getPointerId(e, (size_t)i) & 31;
     float x = AMotionEvent_getX(e, (size_t)i), y = AMotionEvent_getY(e, (size_t)i);
@@ -1072,7 +1088,9 @@ static void ch_touch(AInputEvent *e, float W, float H) {   // a row toggles when
         }
         if (arrow) ch_page(arrow);
         else if (fabsf(dx) > W * 0.05f && fabsf(dx) > fabsf(dy) * 1.5f) ch_page(dx < 0 ? 1 : -1);   // a sideways swipe
-        else if (row == down && row == -2) ch_back(); else if (row == down) { if (row >= 1) menu_marq(row); ch_do(row); }   // a tapped cheat's name scrolls when it does not fit
+        else if (row == down && row == -2) ch_back();
+        else if (row == down && row == OVM_ROWS - 1) ch_do(row);   // Back
+        else if (row == down && row >= 1) { if (x >= ch_switch_x(W, H, row)) ch_do(row); else menu_marq(row); }   // the ON/OFF flips it; its name, tapped, scrolls when it does not fit
     } else if (act == AMOTION_EVENT_ACTION_CANCEL) g_ch_ptr = -1;
 }
 #define CH_ROW(i, st, ...) do { rows[i].style = st; snprintf(rows[i].left, sizeof rows[i].left, __VA_ARGS__); } while (0)
