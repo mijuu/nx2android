@@ -90,20 +90,23 @@ int main(void) {
     assert(ov_drag_pos(1100, 600, 1013, 50) == 506.5f);
     assert(ov_drag_pos(1100, 505, 1013, 50) == 508);
 
-// Nine rows a tab: the gamepad's settings then the audio picker (a device may not offer it), the Game tab the picture's, the save's and the frame generation's, the Cheats tab its picker
-    assert(ov_menu_item(0, OVM_ROWS - 1) == OVM_RESUME);
-    assert(ov_menu_item(1, 1) == OVM_FPS && ov_menu_item(1, 2) == OVM_SR && ov_menu_item(1, 3) == OVM_SHARP && ov_menu_item(1, 6) == OVM_IMPORT);
+// The drawer: five tabs, a window of OVM_VIEW rows a tab (the Game tab's nine scroll), Resume and Exit
+    assert(OVM_ROWS == OVM_VIEW + 3 && OVM_VIEW < OVM_PER_TAB);
+    assert(ov_menu_item(0, 0, 0) == OVM_TAB);
+    assert(ov_menu_item(0, OVM_VIEW + 1, 0) == OVM_RESUME && ov_menu_item(0, OVM_VIEW + 2, 0) == OVM_EXIT);
+    assert(ov_menu_item(1, 1, 0) == OVM_FPS && ov_menu_item(1, 2, 0) == OVM_SR && ov_menu_item(1, 3, 0) == OVM_SHARP && ov_menu_item(1, 6, 0) == OVM_IMPORT);
     import_available = 1;
-    assert(ov_menu_item(1, 7) == OVM_FRAMEGEN && ov_menu_item(1, 8) == OVM_FG_TARGET && ov_menu_item(1, 9) == OVM_FG_IMPORT);
-    assert(ov_menu_item(4, 1) == OVM_ENABLE_CHEATS && ov_menu_item(4, 2) == OVM_CHEATS && ov_menu_item(4, 3) == -1 && ov_menu_item(4, OVM_ROWS - 2) == -1 && ov_menu_item(4, OVM_ROWS - 1) == OVM_RESUME);
+    assert(ov_menu_item(1, 7, 0) == OVM_FRAMEGEN && ov_menu_item(1, 7, 1) == OVM_FG_TARGET && ov_menu_item(1, 7, 2) == OVM_FG_IMPORT);
+    assert(ov_menu_max_scroll(1) == OVM_PER_TAB - OVM_VIEW && ov_menu_max_scroll(0) == 0 && ov_menu_max_scroll(2) == 0 && ov_menu_max_scroll(3) == 0 && ov_menu_max_scroll(4) == 0);
+    assert(ov_menu_item(4, 1, 0) == OVM_ENABLE_CHEATS && ov_menu_item(4, 2, 0) == OVM_CHEATS && ov_menu_item(4, 3, 0) == -1 && ov_menu_item(4, OVM_VIEW + 1, 0) == OVM_RESUME);
     audio_available = 0;
-    assert(ov_menu_item(0, 6) == -1);
+    assert(ov_menu_item(0, 6, 0) == -1);
     audio_available = 1;
-    assert(ov_menu_item(0, 6) == OVM_AUDIO && ov_menu_item(0, 5) == OVM_PAD);
+    assert(ov_menu_item(0, 6, 0) == OVM_AUDIO && ov_menu_item(0, 5, 0) == OVM_PAD);
     import_available = 0;
-    assert(ov_menu_item(1, 9) == -1);
+    assert(ov_menu_item(1, 7, 2) == -1);
     import_available = 1;
-    assert(ov_menu_item(1, 9) == OVM_FG_IMPORT);
+    assert(ov_menu_item(1, 7, 2) == OVM_FG_IMPORT);
 float tp[4], tr[4]; ov_menu_rect(2400, 1080, tp); ov_menu_rowrect(tp, 0, tr);
     assert(ov_menu_tab_at(tr[0] + tr[2] * 0.10f, tp) == 0 && ov_menu_tab_at(tr[0] + tr[2] * 0.50f, tp) == 2 && ov_menu_tab_at(tr[0] + tr[2] * 0.90f, tp) == 4);
     const float screens[][2] = {{915, 412}, {1216, 760}, {2400, 1080}, {1080, 2400}};

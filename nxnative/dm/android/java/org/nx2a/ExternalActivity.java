@@ -231,9 +231,10 @@ public class ExternalActivity extends NativeActivity implements ExternalDisplay.
         private float menuRows(float[] data) { return data[5 + names.length * 9]; }   // overlay_layout.h OVM_ROWS: the menu's rows
         private void drawMenu(Canvas c, float[] data) {
             Bitmap bitmap = menuRaster(menuState); if (bitmap == null) return;
-            float rows = menuRows(data), W = getWidth(), H = getHeight(), scale = Math.min(data[1], .92f / (rows * .115f + 2 * .03f));
-            float w = Math.min(.95f * H * scale, W * .96f), h = (rows * .115f + 2 * .03f) * H * scale;
-            paint.setAlpha(255); c.drawBitmap(bitmap, null, new RectF((W-w)/2, (H-h)/2, (W+w)/2, (H+h)/2), paint);
+            float W = getWidth(), H = getHeight();   // the drawer: the raster is its half-size picture, at the right edge
+            paint.setAlpha(255);
+            if ((menuState & 0x10000) != 0) { c.drawBitmap(bitmap, null, new RectF(0, 0, W, H), paint); return; }   // the text entry's keyboard fills the mirror
+            c.drawBitmap(bitmap, null, new RectF(W - 2 * bitmap.getWidth(), 0, W, H), paint);
         }
         private void drawEditor(Canvas c, float[] data, int state) {
             Bitmap bitmap = menuRaster(state); if (bitmap == null) return;

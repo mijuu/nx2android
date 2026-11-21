@@ -73,6 +73,8 @@ static void dm_cheats_master_set(int on) { ch_master = on; }
 #define ch_open() ((void)0)
 #define ch_touch(e, W, H) ((void)(e), (void)(W), (void)(H))
 static void dm_overlay_redraw(void) {}
+static _Atomic int g_menu_exit_armed;
+static void menu_exit(void) {}
 ''' + visible + hidden + hit + menu + r'''
 // Synthetic Android events. The production dispatch and touch handlers below consume them.
 enum { AINPUT_SOURCE_TOUCHSCREEN = 1, AINPUT_SOURCE_GAMEPAD = 2, AINPUT_SOURCE_JOYSTICK = 4, AINPUT_SOURCE_KEYBOARD = 8 };
