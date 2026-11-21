@@ -1,4 +1,4 @@
-"""The Android frame rate counter's options: the menu table (five tabs), the settings.txt keys and the packed state."""
+"""The Android frame rate counter's options: the menu table (four tabs), the settings.txt keys and the packed state."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -36,16 +36,19 @@ int dm_overlay_custom(int l, int c, float *x, float *y, float *s) { (void)l; (vo
 static int parse(const char *line) { return fps_opt_parse(line); }
 int main(int argc, char **argv) {
     assert(argc == 2);   // a scratch file in the test's own folder (tmpfile() on MinGW with msvcrt makes it in the drive's root)
-    // five tabs; the drawer shows OVM_VIEW rows a tab and scrolls the rest: the Game tab's nine (six rows, the frame generation's three);
-    // the Counter tab: the five rows (FPS, SOC, BAT, driver, graph); the Style tab: the four choices; the Cheats tab its two rows
-    assert(OVM_TABS == 5 && OVM_PER_TAB == 9 && OVM_VIEW == 7 && OVM_ROWS == 10);
+    // four tabs; the drawer shows OVM_VIEW rows a tab and scrolls the rest: the Game tab's eight (super resolution and its sharpness,
+    // frame generation's three, the mode, the two saves); the FPS tab's ten (its switch, the five rows, the four look choices); the Cheats tab its two rows
+    assert(OVM_TABS == 4 && OVM_PER_TAB == 10 && OVM_VIEW == 7 && OVM_ROWS == 10);
     assert(ov_menu_item(0, 0, 0) == OVM_TAB && ov_menu_item(3, OVM_VIEW + 1, 0) == OVM_RESUME);
-    assert(ov_menu_item(1, 1, 0) == OVM_FPS && ov_menu_item(0, 6, 0) == OVM_AUDIO && ov_menu_item(1, 5, 0) == OVM_EXPORT && ov_menu_item(4, 1, 0) == OVM_ENABLE_CHEATS);
-    assert(ov_menu_item(1, 7, 0) == OVM_FRAMEGEN && ov_menu_item(1, 7, 1) == OVM_FG_TARGET && ov_menu_item(1, 7, 2) == OVM_FG_IMPORT);
-    const int counter[5] = {OVM_ROW_FPS, OVM_ROW_SOC, OVM_ROW_BAT, OVM_ROW_DRV, OVM_ROW_GRAPH}, style[5] = {OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE, -1};
-    for (int r = 0; r < 5; r++) { assert(ov_menu_item(2, r + 1, 0) == counter[r]); assert(ov_menu_item(3, r + 1, 0) == style[r]); }
-    assert(ov_menu_item(2, 6, 0) == -1 && ov_menu_item(3, 5, 0) == -1 && ov_menu_item(3, 6, 0) == -1);
-    assert(!strcmp(OVM_TAB_NAMES[2], "FPS") && !strcmp(OVM_TAB_NAMES[3], "Style"));
+    assert(ov_menu_item(1, 1, 0) == OVM_SR && ov_menu_item(1, 2, 0) == OVM_SHARP && ov_menu_item(0, 6, 0) == OVM_AUDIO && ov_menu_item(3, 1, 0) == OVM_ENABLE_CHEATS);
+    assert(ov_menu_item(1, 3, 0) == OVM_FRAMEGEN && ov_menu_item(1, 4, 0) == OVM_FG_TARGET && ov_menu_item(1, 5, 0) == OVM_FG_IMPORT);
+    assert(ov_menu_item(1, 7, 0) == OVM_EXPORT && ov_menu_item(1, 7, 1) == OVM_IMPORT && ov_menu_max_scroll(1) == 1);
+    const int counter[5] = {OVM_ROW_FPS, OVM_ROW_SOC, OVM_ROW_BAT, OVM_ROW_DRV, OVM_ROW_GRAPH}, style[4] = {OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE};
+    assert(ov_menu_item(2, 1, 0) == OVM_FPS);
+    for (int r = 0; r < 5; r++) assert(ov_menu_item(2, r + 2, 0) == counter[r]);
+    for (int r = 0; r < 4; r++) assert(ov_menu_item(2, 7, r) == style[r]);
+    assert(ov_menu_item(2, 7, 4) == -1 && ov_menu_max_scroll(2) == 3);
+    assert(!strcmp(OVM_TAB_NAMES[2], "FPS") && !strcmp(OVM_TAB_NAMES[3], "Cheats"));
     float p[4] = {0, 0, 1000, 700};
     for (int t = 0; t < OVM_TABS; t++) { float r[4]; ov_menu_rowrect(p, 0, r); assert(ov_menu_tab_at(r[0] + (t + 0.5f) * r[2] / OVM_TABS, p) == t); }
     // the defaults: today's look (FPS, SOC and BAT; the driver row and the graph are opt-ins)

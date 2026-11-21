@@ -192,19 +192,16 @@ enum { OVM_OVERLAY, OVM_OPACITY, OVM_EDIT, OVM_RUMBLE, OVM_FPS, OVM_SR, OVM_SHAR
             // OVM_PAD: a controller's face buttons by their position or by their label (front_android.c pad_labels);
             // OVM_FRAMEGEN: 2x Lossless frame generation, OVM_FG_TARGET: its 60 FPS / No limit display target, OVM_FG_IMPORT: the Lossless.dll import (gfx_vk_lsfg.c);
             // OVM_ENABLE_CHEATS: the cheats master switch, OVM_CHEATS: the cheat list (both hle_cheats.c); OVM_EXIT: closes the game
-#define OVM_TABS 5
-#define OVM_PER_TAB 9   // the rows a tab's table may have (the Game tab has all nine; the save picker and the cheats picker draw into OVM_ROWS rows too)
-#define OVM_VIEW 7      // the tab's rows the drawer shows at once: the rest scroll under them (the Game tab's nine need two)
+#define OVM_TABS 4
+#define OVM_PER_TAB 10   // the rows a tab's table may have (the FPS tab has all ten; the save picker and the cheats picker draw into OVM_ROWS rows too)
+#define OVM_VIEW 7       // the tab's rows the drawer shows at once: the rest scroll under them (the FPS tab's ten need three)
 #define OVM_ROWS (OVM_VIEW + 3)   // the tabs, the rows, Resume, Exit
-static const int OVM_TAB_ITEMS[OVM_TABS][OVM_PER_TAB] = {{OVM_OVERLAY, OVM_OPACITY, OVM_EDIT, OVM_RUMBLE, OVM_PAD, OVM_AUDIO, -1, -1, -1},
-                                                         {OVM_FPS, OVM_SR, OVM_SHARP, OVM_MODE, OVM_EXPORT, OVM_IMPORT, OVM_FRAMEGEN, OVM_FG_TARGET, OVM_FG_IMPORT},
-                                                         {OVM_ROW_FPS, OVM_ROW_SOC, OVM_ROW_BAT, OVM_ROW_DRV, OVM_ROW_GRAPH, -1, -1, -1, -1},
-                                                         {OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE, -1, -1, -1, -1, -1},
-                                                         {OVM_ENABLE_CHEATS, OVM_CHEATS, -1, -1, -1, -1, -1, -1, -1}};
-static const char *const OVM_TAB_NAMES[OVM_TABS] = {"Pad", "Game", "FPS", "Style", "Cheats"};
+static const int OVM_TAB_ITEMS[OVM_TABS][OVM_PER_TAB] = {{OVM_OVERLAY, OVM_OPACITY, OVM_EDIT, OVM_RUMBLE, OVM_PAD, OVM_AUDIO, -1, -1, -1, -1},
+                                                         {OVM_SR, OVM_SHARP, OVM_FRAMEGEN, OVM_FG_TARGET, OVM_FG_IMPORT, OVM_MODE, OVM_EXPORT, OVM_IMPORT, -1, -1},
+                                                         {OVM_FPS, OVM_ROW_FPS, OVM_ROW_SOC, OVM_ROW_BAT, OVM_ROW_DRV, OVM_ROW_GRAPH, OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE},
+                                                         {OVM_ENABLE_CHEATS, OVM_CHEATS, -1, -1, -1, -1, -1, -1, -1, -1}};
+static const char *const OVM_TAB_NAMES[OVM_TABS] = {"Pad", "Game", "FPS", "Cheats"};
 static inline int ov_menu_raw(int tab, int k) { return k >= 0 && k < OVM_PER_TAB ? OVM_TAB_ITEMS[tab % OVM_TABS][k] : -1; }
-static inline int ov_menu_nrows(int tab) { int n = OVM_PER_TAB; while (n > 0 && ov_menu_raw(tab, n - 1) < 0) n--; return n; }
-static inline int ov_menu_max_scroll(int tab) { int n = ov_menu_nrows(tab); return n > OVM_VIEW ? n - OVM_VIEW : 0; }
 static inline int fpso_step(int o, int item) {   // the options after a press on a menu item: a row's bit flips, the others go to their next value (and round)
     int r = fpso_rows(o), p = fpso_pos(o), c = fpso_colour(o), l = fpso_outline(o), z = fpso_size(o);
     switch (item) {
@@ -224,16 +221,22 @@ static inline int fpso_step(int o, int item) {   // the options after a press on
 int dm_menu_audio_available(void);
 int dm_menu_lossless_import_available(void);
 static inline int ov_menu_avail(int item) {
-    return !(item == OVM_AUDIO && !dm_menu_audio_available()) && !(item == OVM_FG_IMPORT && !dm_menu_lossless_import_available());
+    return item >= 0 && !(item == OVM_AUDIO && !dm_menu_audio_available()) && !(item == OVM_FG_IMPORT && !dm_menu_lossless_import_available());
 }
+// a row that cannot show (no audio activity, no Lossless.dll) leaves no gap: the tab's rows are counted and indexed over the ones that show
+static inline int ov_menu_shown(int tab, int k) {   // the tab's k-th row that shows, -1 past the last
+    for (int i = 0; i < OVM_PER_TAB; i++) { int it = ov_menu_raw(tab, i); if (it < 0) return -1; if (ov_menu_avail(it) && k-- == 0) return it; }
+    return -1;
+}
+static inline int ov_menu_nrows(int tab) { int n = 0; while (ov_menu_shown(tab, n) >= 0) n++; return n; }
+static inline int ov_menu_max_scroll(int tab) { int n = ov_menu_nrows(tab); return n > OVM_VIEW ? n - OVM_VIEW : 0; }
 // row: the drawer's slot (0 the tabs, 1..OVM_VIEW the tab's rows from the first shown, OVM_VIEW + 1 Resume, OVM_VIEW + 2 Exit); scroll: the tab's first row shown
 static inline int ov_menu_item(int tab, int row, int scroll) {
     if (row == 0) return OVM_TAB;
     if (row == OVM_VIEW + 1) return OVM_RESUME;
     if (row == OVM_VIEW + 2) return OVM_EXIT;
     if (row < 1 || row > OVM_VIEW) return -1;
-    int item = ov_menu_raw(tab, scroll + row - 1);
-    return item >= 0 && ov_menu_avail(item) ? item : -1;
+    return ov_menu_shown(tab, scroll + row - 1);
 }
 #define OV_MENU_ROW 0.096f   // a row's height, of the window's height
 #define OV_MENU_W 0.78f      // the drawer's width, of the window's height (a narrow window takes 92% of its width)
@@ -243,7 +246,7 @@ static inline int ov_menu_item(int tab, int row, int scroll) {
 // what the menu shows (-1 = closed): bit 0 the gamepad is on, bit 1 rumble is on, bit 2 docked, bit 3 the frame rate shown, bits 4..7 the highlighted row + 1
 // (0 = none), bits 9..12 the opacity as steps of 5 from OV_OPACITY_MIN, bits 13..15 the sharpness in 25 percent steps, bits 20..22 the last export's
 // outcome (OVX_*), bits 24..27 a count of exports (its name changes with each), bit 23 the super resolution is on, bit 30 the face buttons by label, and the
-// open tab in bits 8, 28 and 29 (five tabs; tests/test_menu_bits.py). Bit 16: the text entry's panel instead (its edit count below); bit 17: the layout
+// open tab in bits 8, 28 and 29 (four tabs; tests/test_menu_bits.py). Bit 16: the text entry's panel instead (its edit count below); bit 17: the layout
 // editor (OVE_ST_* below); bit 18: the save picker (OVS_ST); bit 19: the cheats picker (OVC_ST); never bit 31 (a negative state reads as "no menu", which
 // is how a closed one is named)
 #define OVT_ST 0x10000   // the mode bits of dm_menu_state, one each: OVT_ST the text entry, OVE_ST the layout editor, OVS_ST the save picker, OVC_ST the cheats picker (tests/test_menu_bits.py)
@@ -321,10 +324,10 @@ typedef struct { int style; char left[80], right[40]; } ov_srow;
 int dm_save_rows(ov_srow rows[OVM_ROWS]);   // front_android.c: the picker's rows, 0 when it is not open
 
 // ---- the cheats picker (front_android.c, from the menu's Cheats tab): the same panel, one row per cheat of the running build's Atmosphère file (hle_cheats.c),
-// OVM_ROWS - 2 to a page (left and right, L and R, a tap on the title row's page arrows or a sideways swipe page), its name and on / off state, then Back.
+// OVM_ROWS - 2 at a time, scrolling (a drag; up and down at the window's edge; L and R a window), its name and on / off state, then Back.
 // The master switch is the menu's own Enable cheats row (OVM_ENABLE_CHEATS), above the list: every launch starts with it off, one tap runs the saved set,
 // turning it off puts back the code words the passes changed, and the title says "(off)" while it is. dm_menu_state: bit 19, bits 4..7 the highlighted row + 1,
-// bits 20..27 the picker's edit count (a toggle, a page, the host's cheat states) ----
+// bits 20..27 the picker's edit count (a toggle, a scroll, the host's cheat states) ----
 #define OVC_ST 0x80000
 int dm_cheat_rows(ov_srow rows[OVM_ROWS]);   // front_android.c: the picker's rows, 0 when it is not open
 

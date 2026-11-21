@@ -697,7 +697,7 @@ static float ov_glow(int64_t t, int64_t now) {   // a held button's glow: bright
     float f = (float)(now - t) / OV_FLASH_NS; return f >= 1 ? 0.22f : 0.22f + 0.48f * (1 - f) * (1 - f);
 }
 // The frame rate counter: the game's frames shown per second, measured over half a second, with the chip's and the battery's temperature and the Vulkan driver
-// in use, in a corner of the window (the pause menu's Counter and Style tabs, overlay_layout.h fpso_*: the rows, the corner, the colour, the outline or a dark block
+// in use, in a corner of the window (the pause menu's FPS tab, overlay_layout.h fpso_*: the rows, the corner, the colour, the outline or a dark block
 // behind, the letters' size). The rows are put together from the characters of OV_FPS_CHARS on every present, so a changing number needs no upload. The characters are
 // rasterized in the current size: three sets (the colour, red for a temperature too hot, black for the outline), wrapped into rows of the atlas
 static int ov_fps_wmax(void) {   // the widest advance of OV_FPS_CHARS, in font columns
@@ -852,7 +852,7 @@ static void ov_render(VkCommandBuffer cb, int mode, int menu, int fps) {
         float f = 1; int64_t anim = dm_menu_anim_ns();
         if (anim) { float e = (float)(now - anim) / 180000000.0f; f = e <= 0 ? 0 : e >= 1 ? 1 : 1 - (1 - e) * (1 - e) * (1 - e); }
         ov_rect(cb, 0, 0, W, H, bx - 2, by - 2, bx + 2, by + 2, 0.55f * f);
-        if (fps && !(menu & OVT_ST)) ov_fps(cb, now);   // (the counter's preview on the FPS and Style tabs: under the drawer; not over a game's text entry, bit 16)
+        if (fps && !(menu & OVT_ST)) ov_fps(cb, now);   // (the counter's preview on the FPS tab: under the drawer; not over a game's text entry, bit 16)
         float r[4], v0 = (float)(g_ov.h + g_ov.sh); ov_menu_rect(W, H, r);
         if (menu & OVT_ST) ov_rect(cb, 0, 0, W, H, 0, v0, (float)g_ov.pw, v0 + (float)g_ov.ph, 1);   // the text entry's keyboard fills the window
         else { float dx = (1 - f) * r[2];   // the drawer's part of the raster, at the right edge, sliding in
