@@ -512,7 +512,7 @@ static void ov_menu_panel(const ov_canvas *cv, int st, int fg, const float p[4])
         float bw = button ? cv_text_w(OVM_BUTTONS[it], is) + 2 * sh : 0, bx = x1 - bw;
         char word[32] = ""; int on = 0, off = 0;
         if (!slider && !seg && !pill && !button) {   // a switch
-            if (it == OVM_FG_IMPORT) snprintf(word, sizeof word, "%s", fg >> 1 & 1 ? "present" : "missing");   // the DLL's state, not a control: this build has no Java picker
+            if (it == OVM_FG_IMPORT) snprintf(word, sizeof word, "%s", fg >> 1 & 1 ? "detected" : "missing");   // the DLL's state, not a control: this build has no Java picker
             else {
                 on = it >= OVM_ROW_FPS && it <= OVM_ROW_GRAPH ? fpso_rows(fo) >> (it - OVM_ROW_FPS) & 1 : it == OVM_ENABLE_CHEATS ? dm_cheats_master() : it == OVM_FRAMEGEN ? fg & 1 : st >> ovm_bit(it) & 1;
                 off = it == OVM_FRAMEGEN && !(fg >> 1 & 1);   // no Lossless.dll: the row says so, off
