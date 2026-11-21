@@ -1152,13 +1152,15 @@ static int framegen_output_rate(int target, uint64_t refresh_ns) {
 
 // A PC frame-generation tool locks its output rate and lets its queue absorb the source's
 // jitter instead of skipping generated frames; the FIFO's 60 Hz back-pressure can do the
-// same here. env.txt DM_VK_FG_LOCK=1 pairs every real frame near half the target, so a fast
-// sample costs a delayed present rather than a missing one (the skips cost 3-5 fps at 30->60).
+// same here. Pairing every real frame near half the target makes a fast sample cost a
+// delayed present rather than a missing one (the skips cost 3-5 fps at 30->60); on a device
+// the user saw that as clearly smoother with no visible interpolation cost. env.txt
+// DM_VK_FG_LOCK=0 keeps the credit's skips.
 static int framegen_lock(void) {
     static int on = -1;
     if (on < 0) {
         const char *e = getenv("DM_VK_FG_LOCK");
-        on = e && atoi(e);
+        on = !(e && !atoi(e));
         if (on) VKLOG("[fg] locked output: a pair for every real frame near half the target");
     }
     return on;
