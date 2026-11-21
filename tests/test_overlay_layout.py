@@ -94,19 +94,18 @@ int main(void) {
     assert(OVM_ROWS == OVM_VIEW + 3 && OVM_VIEW < OVM_PER_TAB);
     assert(ov_menu_item(0, 0, 0) == OVM_TAB);
     assert(ov_menu_item(0, OVM_VIEW + 1, 0) == OVM_RESUME && ov_menu_item(0, OVM_VIEW + 2, 0) == OVM_EXIT);
-    assert(ov_menu_item(1, 1, 0) == OVM_SR && ov_menu_item(1, 2, 0) == OVM_SHARP && ov_menu_item(1, 3, 0) == OVM_FRAMEGEN && ov_menu_item(1, 4, 0) == OVM_FG_TARGET);
-    import_available = 1;
-    assert(ov_menu_item(1, 5, 0) == OVM_FG_IMPORT && ov_menu_item(1, 6, 0) == OVM_MODE && ov_menu_item(1, 7, 0) == OVM_EXPORT && ov_menu_item(1, 7, 1) == OVM_IMPORT);
+    assert(ov_menu_item(1, 1, 0) == OVM_SR && ov_menu_item(1, 2, 0) == OVM_SHARP && ov_menu_item(1, 3, 0) == OVM_FG_IMPORT && ov_menu_item(1, 4, 0) == OVM_FRAMEGEN);
+    assert(ov_menu_item(1, 5, 0) == OVM_FG_TARGET && ov_menu_item(1, 6, 0) == OVM_MODE && ov_menu_item(1, 7, 0) == OVM_EXPORT && ov_menu_item(1, 7, 1) == OVM_IMPORT);
     assert(ov_menu_max_scroll(1) == 1 && ov_menu_max_scroll(0) == 0 && ov_menu_max_scroll(2) == 3 && ov_menu_max_scroll(3) == 0);
     assert(ov_menu_item(3, 1, 0) == OVM_ENABLE_CHEATS && ov_menu_item(3, 2, 0) == OVM_CHEATS && ov_menu_item(3, 3, 0) == -1 && ov_menu_item(3, OVM_VIEW + 1, 0) == OVM_RESUME);
     audio_available = 0;
     assert(ov_menu_item(0, 6, 0) == -1);
     audio_available = 1;
     assert(ov_menu_item(0, 6, 0) == OVM_AUDIO && ov_menu_item(0, 5, 0) == OVM_PAD);
-    import_available = 0;   // no Lossless.dll: the row leaves no gap, so all seven rows show and nothing scrolls
-    assert(ov_menu_item(1, 5, 0) == OVM_MODE && ov_menu_item(1, 7, 0) == OVM_IMPORT && ov_menu_max_scroll(1) == 0);
+    import_available = 0;   // the row stays: it is the DLL's state row now, so nothing leaves a gap either way
+    assert(ov_menu_item(1, 3, 0) == OVM_FG_IMPORT && ov_menu_item(1, 7, 1) == OVM_IMPORT && ov_menu_max_scroll(1) == 1);
     import_available = 1;
-    assert(ov_menu_item(1, 5, 0) == OVM_FG_IMPORT && ov_menu_max_scroll(1) == 1);
+    assert(ov_menu_item(1, 3, 0) == OVM_FG_IMPORT);
 float tp[4], tr[4]; ov_menu_rect(2400, 1080, tp); ov_menu_rowrect(tp, 0, tr);
     assert(ov_menu_tab_at(tr[0] + tr[2] * 0.10f, tp) == 0 && ov_menu_tab_at(tr[0] + tr[2] * 0.50f, tp) == 2 && ov_menu_tab_at(tr[0] + tr[2] * 0.90f, tp) == 3);
     const float screens[][2] = {{915, 412}, {1216, 760}, {2400, 1080}, {1080, 2400}};

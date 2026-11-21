@@ -653,9 +653,9 @@ int64_t dm_menu_anim_ns(void) { return atomic_load(&g_menu_anim); }
 static _Atomic int g_tx_ver;   // the text entry's edit count: the panel is drawn again when it changes
 static _Atomic int g_ed_st;    // the layout editor's state for dm_menu_state (overlay_layout.h OVE_ST)
 static _Atomic int g_sp_on, g_sp_hi = -1, g_sp_ver;   // the save picker (below): open, its highlighted row, its edit count
-static _Atomic int g_ch_on, g_ch_hi = -1, g_ch_ver, g_ch_scroll;   // the cheats picker (below): open, its highlighted row, its edit count, its first cheat shown
+static _Atomic int g_ch_on, g_ch_hi = -1, g_ch_ver, g_ch_page;   // the cheats picker (below): open, its highlighted row, its edit count, its page
 static int g_ch_ptr = -1, g_ch_row = -2;              // the pointer pressing in the picker, and the row it went down on
-static float g_ch_y0; static int g_ch_scroll0, g_ch_scrolled;   // a finger's drag of the list
+static float g_ch_x, g_ch_y;                          // where it went down: the page arrows in the title row, or a sideways swipe
 static _Atomic int g_sv_st, g_sv_n;                   // Export save: its outcome (overlay_layout.h OVX_*), the exports made
 int dm_menu_state(void) {
     if (atomic_load(&g_tx_on)) return OVT_ST | (atomic_load(&g_tx_ver) & 0xffff);   // the text entry's panel (gfx_vk_present.c ov_text_panel)
@@ -686,7 +686,7 @@ int dm_overlay_sharp(void) { return atomic_load(&g_set_sharp); }   // its Sharpn
 static void menu_open(int hi) {
     if (!atomic_load(&g_running) || atomic_exchange(&g_menu, 1)) return;
 atomic_store(&g_menu_hi, hi); g_menu_ptr = -1;
-    atomic_store(&g_ch_on, 0); g_ch_ptr = -1; g_ch_scrolled = 0;
+    atomic_store(&g_ch_on, 0); g_ch_ptr = -1;
     atomic_store(&g_menu_scroll, 0); atomic_store(&g_menu_exit_armed, 0); atomic_store(&g_menu_anim, mono_ns());
     if (atomic_load(&g_sv_st) != OVX_BUSY) atomic_store(&g_sv_st, OVX_IDLE);   // the last export's note goes (one still copying stays)
     dm_input_set(0, 0, 0, 0, 0); dm_touch_set(NULL, 0); atomic_store(&g_touch_btn, 0);   // nothing stays pressed in the game
@@ -793,7 +793,7 @@ else if (fps_opt_press(item)) settings_save();   // the counter's rows, corner, 
     else if (item == OVM_AUDIO) { menu_audio(); }
 else if (item == OVM_ENABLE_CHEATS) { dm_cheats_master_set(!dm_cheats_master()); }
     else if (item == OVM_CHEATS) { dm_haptics_android_tap(); ch_open(); return; }
-    else if (item == OVM_FG_IMPORT) { menu_lossless_import(); }
+    else if (item == OVM_FG_IMPORT) { if (dm_menu_lossless_import_available()) menu_lossless_import(); else dm_overlay_redraw(); }   // otherwise the row is the DLL's state only
     else if (item == OVM_EXIT) {   // a second press ends the game
         if (atomic_load(&g_menu_exit_armed)) { menu_exit(); return; }
         atomic_store(&g_menu_exit_armed, 1); dm_haptics_android_tap(); dm_overlay_redraw(); return;
@@ -984,104 +984,96 @@ int dm_save_rows(ov_srow rows[OVM_ROWS]) {   // (gfx_vk_present.c ov_save_panel)
 }
 
 // ---- the cheats picker (overlay_layout.h OVC_*; hle_cheats.c): the pause menu's panel, one row per cheat of the running build's Atmosphère file, its name and
-// on / off state, OVM_ROWS - 2 at a time, scrolling (a drag; up and down at the window's edge; L and R a window), Back. The master switch is the Cheats tab's
+// on / off state, OVM_ROWS - 2 to a page (the title row's < and > arrows, L and R, or a sideways swipe), Back. The master switch is the Cheats tab's
 // own Enable cheats row: every launch starts with it off (nothing runs, the saved toggles still show), one tap runs the saved set, and turning it off puts back
 // the code words the passes changed; the title says "(off)" while it is. A row toggles when it lifts there; a controller: up and down choose, A does, B goes
 // back. Opening it reloads the file, so one pushed over adb while the game runs appears without a re-launch. Nothing is shown when the build has no file: the
 // rows say which file to put where, with the build ID the host read from main ----
-static int ch_per(void) { return OVM_ROWS - 2; }   // the title, the cheats shown, Back
+static int ch_per(void) { return OVM_ROWS - 2; }   // the title, the page's cheats, Back
 static int ch_n(void) { return dm_cheats_ncheats(); }
-static int ch_maxs(void) { int n = ch_n() - ch_per(); return n > 0 ? n : 0; }   // the last first cheat shown
-static int ch_visible(void) {   // the cheats of the open window
-    int n = ch_n() - atomic_load(&g_ch_scroll);
+static int ch_pages(void) { int n = ch_n(); return n > 0 ? (n + ch_per() - 1) / ch_per() : 1; }
+static int ch_on_page(void) {   // the cheats of the open page
+    int n = ch_n() - atomic_load(&g_ch_page) * ch_per();
     return n < 0 ? 0 : n > ch_per() ? ch_per() : n;
 }
 static int ch_selectable(int row) {
     if (!atomic_load(&g_ch_on) || row < 0) return 0;
     if (row == OVM_ROWS - 1) return 1;
-    if (row < 1 || row > ch_visible()) return 0;
-    return dm_cheat_kind_at(atomic_load(&g_ch_scroll) + row - 1) == 0;   // masters, labels and disabled cheats take no click
+    if (row < 1 || row > ch_on_page()) return 0;
+    int i = atomic_load(&g_ch_page) * ch_per() + row - 1;
+    return dm_cheat_kind_at(i) == 0;   // masters, labels and disabled cheats take no click
 }
 static void ch_changed(void) { atomic_fetch_add(&g_ch_ver, 1); dm_overlay_redraw(); }
-static void ch_first(void) {   // the first selectable row of the window, else Back
-    int hi = OVM_ROWS - 1, s = atomic_load(&g_ch_scroll);
-    for (int j = 1; j <= ch_visible(); j++) if (dm_cheat_kind_at(s + j - 1) == 0) { hi = j; break; }
+static void ch_first(int page) {   // the first selectable row of a page, else Back
+    int hi = OVM_ROWS - 1;
+    for (int j = 1; j <= ch_per(); j++) {
+        int i = page * ch_per() + j - 1;
+        if (i < ch_n() && dm_cheat_kind_at(i) == 0) { hi = j; break; }
+    }
     atomic_store(&g_ch_hi, hi);
 }
 static void ch_open(void) {
     dm_cheats_reload();   // a file pushed while the game runs, or its edits, are read now (hle_cheats.c load_all)
-    atomic_store(&g_ch_scroll, 0); g_ch_ptr = -1; g_ch_row = -2; g_ch_scrolled = 0; ch_first();
+    atomic_store(&g_ch_page, 0); g_ch_ptr = -1; g_ch_row = -2; ch_first(0);
     atomic_store(&g_ch_on, 1); ch_changed();
     LOG("[cheats] picker opened: %d cheat%s, build %s, folder %s%s", ch_n(), ch_n() == 1 ? "" : "s", dm_cheats_build(), dm_cheats_dir_path(),
         dm_cheats_master() ? "" : " (Enable cheats: off)");
 }
 static void ch_back(void) {
     if (!atomic_exchange(&g_ch_on, 0)) return;
-    g_ch_ptr = -1; g_ch_scrolled = 0; atomic_store(&g_ch_hi, -1); ch_changed();
+    g_ch_ptr = -1; atomic_store(&g_ch_hi, -1); ch_changed();
 }
 static void ch_do(int row) {
     if (!ch_selectable(row)) return;
     dm_haptics_android_tap();
     if (row == OVM_ROWS - 1) { ch_back(); return; }
-    dm_cheat_toggle(atomic_load(&g_ch_scroll) + row - 1);
+    dm_cheat_toggle(atomic_load(&g_ch_page) * ch_per() + row - 1);
     ch_changed();
 }
-static void ch_scroll_to(int s) {   // the list's first cheat shown, kept in range; the highlight goes to the window's first selectable
-    s = s < 0 ? 0 : s > ch_maxs() ? ch_maxs() : s;
-    if (s == atomic_load(&g_ch_scroll)) return;
-    atomic_store(&g_ch_scroll, s); dm_haptics_android_tap(); ch_first(); ch_changed();
+static void ch_page(int d) {
+    int pages = ch_pages(), p = atomic_load(&g_ch_page) + d;
+    if (p < 0 || p >= pages || p == atomic_load(&g_ch_page)) return;
+    atomic_store(&g_ch_page, p); ch_first(p); dm_haptics_android_tap(); ch_changed();
 }
 static void ch_key(uint64_t bit) {
     int hi = atomic_load(&g_ch_hi);
     if (bit == DM_BTN_UP || bit == DM_BTN_DOWN) {
-        int d = bit == DM_BTN_UP ? -1 : 1, s = atomic_load(&g_ch_scroll), maxs = ch_maxs();
-        if ((hi == 1 && d < 0 && s > 0) || (hi == ch_per() && d > 0 && s < maxs)) {   // the window's edge: the list scrolls a row under the highlight
-            atomic_store(&g_ch_scroll, s + d); hi = d > 0 ? ch_per() : 1;
-        } else   // the next selectable row, round the title and Back
-            for (int k = 0; k < OVM_ROWS; k++) { hi = hi < 0 ? (d < 0 ? OVM_ROWS - 1 : 0) : (hi + OVM_ROWS + d) % OVM_ROWS; if (ch_selectable(hi)) break; }
-        if (!ch_selectable(hi)) {   // a scrolled row may hold a master or a label: the nearest row that takes a click, else Back
-            for (int j = 1; j < OVM_ROWS && !ch_selectable(hi); j++) {
-                int dn = hi + j, up = hi - j;
-                if (dn <= ch_per() && ch_selectable(dn)) hi = dn;
-                else if (up >= 1 && ch_selectable(up)) hi = up;
-            }
-            if (!ch_selectable(hi)) hi = OVM_ROWS - 1;
-        }
-        atomic_store(&g_ch_hi, hi); ch_changed();
-    } else if (bit == DM_BTN_LEFT || bit == DM_BTN_L || bit == DM_BTN_ZL) ch_scroll_to(atomic_load(&g_ch_scroll) - ch_per());
-    else if (bit == DM_BTN_RIGHT || bit == DM_BTN_R || bit == DM_BTN_ZR) ch_scroll_to(atomic_load(&g_ch_scroll) + ch_per());
+        for (int k = 0; k < OVM_ROWS; k++) { hi = hi < 0 ? (bit == DM_BTN_UP ? OVM_ROWS - 1 : 0) : (hi + (bit == DM_BTN_UP ? OVM_ROWS - 1 : 1)) % OVM_ROWS; if (ch_selectable(hi)) break; }
+        if (ch_selectable(hi)) { atomic_store(&g_ch_hi, hi); ch_changed(); }
+    } else if (bit == DM_BTN_LEFT || bit == DM_BTN_L || bit == DM_BTN_ZL) ch_page(-1);
+    else if (bit == DM_BTN_RIGHT || bit == DM_BTN_R || bit == DM_BTN_ZR) ch_page(1);
     else if (bit == DM_BTN_A) ch_do(hi);
     else if (bit == DM_BTN_B || bit == DM_BTN_PLUS) ch_back();
 }
-static void ch_touch(AInputEvent *e, float W, float H) {   // a row toggles when the finger that went down on it lifts there; a drag scrolls the list; outside the panel goes back
+static void ch_touch(AInputEvent *e, float W, float H) {   // a row toggles when the finger that went down on it lifts there; the title row's arrows or a sideways swipe page; outside the panel goes back
     int act = AMotionEvent_getAction(e) & AMOTION_EVENT_ACTION_MASK, ai = AMotionEvent_getAction(e) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
     int i = act == AMOTION_EVENT_ACTION_DOWN || act == AMOTION_EVENT_ACTION_UP ? 0 : ai, id = AMotionEvent_getPointerId(e, (size_t)i) & 31;
     float x = AMotionEvent_getX(e, (size_t)i), y = AMotionEvent_getY(e, (size_t)i);
     int row = ov_menu_row_at(x, y, W, H);
     if (act == AMOTION_EVENT_ACTION_DOWN || act == AMOTION_EVENT_ACTION_POINTER_DOWN) {
         if (g_ch_ptr >= 0) return;
-        g_ch_ptr = id; g_ch_row = row; g_ch_y0 = y; g_ch_scroll0 = atomic_load(&g_ch_scroll); g_ch_scrolled = 0;
+        g_ch_ptr = id; g_ch_row = row; g_ch_x = x; g_ch_y = y;
         if (ch_selectable(row)) { atomic_store(&g_ch_hi, row); ch_changed(); }
-    } else if (act == AMOTION_EVENT_ACTION_MOVE && g_ch_ptr >= 0) {
-        for (size_t k = 0; k < AMotionEvent_getPointerCount(e); k++) if ((AMotionEvent_getPointerId(e, k) & 31) == g_ch_ptr) {
-            if (g_ch_row < 1 || g_ch_row > ch_per()) continue;   // a finger on the rows: the list follows it, a row at a time
-            float ky = AMotionEvent_getY(e, k), rh = H * OV_MENU_ROW; int want = g_ch_scroll0 + (int)lroundf((g_ch_y0 - ky) / rh), maxs = ch_maxs();
-            want = want < 0 ? 0 : want > maxs ? maxs : want;
-            if (want != atomic_load(&g_ch_scroll)) { atomic_store(&g_ch_scroll, want); g_ch_scrolled = 1; atomic_store(&g_ch_hi, -1); ch_changed(); }
-        }
     } else if ((act == AMOTION_EVENT_ACTION_UP || act == AMOTION_EVENT_ACTION_POINTER_UP) && id == g_ch_ptr) {
         int down = g_ch_row; g_ch_ptr = -1;
-        if (g_ch_scrolled) { g_ch_scrolled = 0; return; }   // a scroll is not a tap
-        if (row == down && row == -2) ch_back(); else if (row == down) ch_do(row);
-    } else if (act == AMOTION_EVENT_ACTION_CANCEL) { g_ch_ptr = -1; g_ch_scrolled = 0; }
+        float dx = x - g_ch_x, dy = y - g_ch_y;
+        int arrow = 0;
+        if (down == 0 && row == 0 && ch_pages() > 1) {   // the arrows gfx_vk_present.c draws: the same slots, so a tap on one pages that way
+            float p[4], a[4]; ov_menu_rect(W, H, p);
+            for (int k = 0; k < 2; k++) { ov_ch_page_slot(p, k ? 2 : 0, a); if (x >= a[0] && x < a[0] + a[2] && y >= a[1] && y < a[1] + a[3]) arrow = k ? 1 : -1; }
+        }
+        if (arrow) ch_page(arrow);
+        else if (fabsf(dx) > W * 0.05f && fabsf(dx) > fabsf(dy) * 1.5f) ch_page(dx < 0 ? 1 : -1);   // a sideways swipe
+        else if (row == down && row == -2) ch_back(); else if (row == down) ch_do(row);
+    } else if (act == AMOTION_EVENT_ACTION_CANCEL) g_ch_ptr = -1;
 }
 #define CH_ROW(i, st, ...) do { rows[i].style = st; snprintf(rows[i].left, sizeof rows[i].left, __VA_ARGS__); } while (0)
 int dm_cheat_rows(ov_srow rows[OVM_ROWS]) {
     if (!atomic_load(&g_ch_on)) return 0;
     memset(rows, 0, sizeof(ov_srow) * OVM_ROWS);
-    int n = ch_n(), s = atomic_load(&g_ch_scroll);
+    int n = ch_n(), pages = ch_pages(), page = atomic_load(&g_ch_page), per = ch_per();
     CH_ROW(0, OVS_TITLE, "%s", dm_cheats_master() ? "Cheats" : "Cheats (off)");   // the master switch is the menu's Enable cheats row; the title carries its state
-    if (n) snprintf(rows[0].right, sizeof rows[0].right, "%d", n);   // how many the file has (the list scrolls, no page numbers to fit)
+    if (pages > 1) snprintf(rows[0].right, sizeof rows[0].right, "%d/%d", page + 1, pages);   // between the title row's < and > arrows
     if (!n) {
         const char *build = dm_cheats_build();
         CH_ROW(1, OVS_NOTE, "No cheats for build %s", build[0] ? build : "?");
@@ -1089,12 +1081,12 @@ int dm_cheat_rows(ov_srow rows[OVM_ROWS]) {
         CH_ROW(3, OVS_NOTE, "%s", dm_cheats_dir_path());
         CH_ROW(4, OVS_NOTE, "Reopen Cheats to load it.");
     } else {
-        int shown = ch_visible();
+        int shown = ch_on_page();
         for (int j = 0; j < shown; j++) {
-            int i = s + j, kind = dm_cheat_kind_at(i), fl = dm_cheat_flags_at(i);
+            int i = page * per + j, kind = dm_cheat_kind_at(i), fl = dm_cheat_flags_at(i);
             const char *nm = dm_cheat_name_at(i), *why = dm_cheat_why_at(i);
             ov_srow *q = &rows[1 + j];
-            q->style = kind == 2 || kind == 3 ? OVS_NOTE : kind == 1 ? OVS_MASTER : OVS_ITEM;   // a master's long title must not shrink the list's cheat rows (ov_rows_panel sizes it alone)
+            q->style = kind == 2 || kind == 3 ? OVS_NOTE : kind == 1 ? OVS_MASTER : OVS_ITEM;   // a master's long title must not shrink the page's cheat rows (ov_rows_panel sizes it alone)
             int killed = kind == 2;   // dead or broken: the reason stays in the log, not on every row (a code write's refusal is not this entry's fault)
             char note[40] = "";       // a failed-access note (the cheat still runs): short, so the row's letters stay readable
             if (why && why[0] && !killed) {

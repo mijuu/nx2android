@@ -37,12 +37,12 @@ static int parse(const char *line) { return fps_opt_parse(line); }
 int main(int argc, char **argv) {
     assert(argc == 2);   // a scratch file in the test's own folder (tmpfile() on MinGW with msvcrt makes it in the drive's root)
     // four tabs; the drawer shows OVM_VIEW rows a tab and scrolls the rest: the Game tab's eight (super resolution and its sharpness,
-    // frame generation's three, the mode, the two saves); the FPS tab's ten (its switch, the five rows, the four look choices); the Cheats tab its two rows
+    // the Lossless.dll row above frame generation's two, the mode, the two saves); the FPS tab's ten (its switch, the five rows, the four look choices); the Cheats tab its two rows
     assert(OVM_TABS == 4 && OVM_PER_TAB == 10 && OVM_VIEW == 7 && OVM_ROWS == 10);
     assert(ov_menu_item(0, 0, 0) == OVM_TAB && ov_menu_item(3, OVM_VIEW + 1, 0) == OVM_RESUME);
     assert(ov_menu_item(1, 1, 0) == OVM_SR && ov_menu_item(1, 2, 0) == OVM_SHARP && ov_menu_item(0, 6, 0) == OVM_AUDIO && ov_menu_item(3, 1, 0) == OVM_ENABLE_CHEATS);
-    assert(ov_menu_item(1, 3, 0) == OVM_FRAMEGEN && ov_menu_item(1, 4, 0) == OVM_FG_TARGET && ov_menu_item(1, 5, 0) == OVM_FG_IMPORT);
-    assert(ov_menu_item(1, 7, 0) == OVM_EXPORT && ov_menu_item(1, 7, 1) == OVM_IMPORT && ov_menu_max_scroll(1) == 1);
+    assert(ov_menu_item(1, 3, 0) == OVM_FG_IMPORT && ov_menu_item(1, 4, 0) == OVM_FRAMEGEN && ov_menu_item(1, 5, 0) == OVM_FG_TARGET);
+    assert(ov_menu_item(1, 6, 0) == OVM_MODE && ov_menu_item(1, 7, 0) == OVM_EXPORT && ov_menu_item(1, 7, 1) == OVM_IMPORT && ov_menu_max_scroll(1) == 1);
     const int counter[5] = {OVM_ROW_FPS, OVM_ROW_SOC, OVM_ROW_BAT, OVM_ROW_DRV, OVM_ROW_GRAPH}, style[4] = {OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE};
     assert(ov_menu_item(2, 1, 0) == OVM_FPS);
     for (int r = 0; r < 5; r++) assert(ov_menu_item(2, r + 2, 0) == counter[r]);

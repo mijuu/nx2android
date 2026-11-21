@@ -483,7 +483,7 @@ static void ov_menu_panel(const ov_canvas *cv, int st, int fg, const float p[4])
             cv_text(cv, r[0] + (rw - cv_text_w(q, is)) / 2, cy, q, is, armed ? C_WHITE : C_HOT);
             continue;
         }
-        int slider = it == OVM_OPACITY || it == OVM_SHARP, seg = it == OVM_MODE || it == OVM_PAD || it == OVM_FG_TARGET, pill = ov_val_n(it) != 0, button = OVM_BUTTONS[it] != NULL;
+        int slider = it == OVM_OPACITY || it == OVM_SHARP, seg = it == OVM_MODE || it == OVM_PAD || it == OVM_FG_TARGET, pill = ov_val_n(it) != 0, button = OVM_BUTTONS[it] != NULL && (it != OVM_FG_IMPORT || dm_menu_lossless_import_available());
         const char *const *segs = it == OVM_MODE ? OVM_MODES : it == OVM_PAD ? OVM_PADS : OVM_FG_TARGETS;
         int cur = it == OVM_MODE ? st >> 2 & 1 : it == OVM_PAD ? st >> 30 & 1 : fg >> 2 & 1;
         float segw = seg ? fmaxf(cv_text_w(segs[0], is), cv_text_w(segs[1], is)) + sh : 0, segx = x1 - 2 * segw;
@@ -491,10 +491,13 @@ static void ov_menu_panel(const ov_canvas *cv, int st, int fg, const float p[4])
         float bw = button ? cv_text_w(OVM_BUTTONS[it], is) + 2 * sh : 0, bx = x1 - bw;
         char word[32] = ""; int on = 0, off = 0;
         if (!slider && !seg && !pill && !button) {   // a switch
-            on = it >= OVM_ROW_FPS && it <= OVM_ROW_GRAPH ? fpso_rows(fo) >> (it - OVM_ROW_FPS) & 1 : it == OVM_ENABLE_CHEATS ? dm_cheats_master() : it == OVM_FRAMEGEN ? fg & 1 : st >> ovm_bit(it) & 1;
-            off = it == OVM_FRAMEGEN && !(fg >> 1 & 1);   // no Lossless.dll: the row says so, off
-            if (off) on = 0;
-            snprintf(word, sizeof word, "%s", off ? "No DLL" : on ? "ON" : "OFF");
+            if (it == OVM_FG_IMPORT) snprintf(word, sizeof word, "%s", fg >> 1 & 1 ? "found" : "missing");   // the DLL's state, not a control: this build has no Java picker
+            else {
+                on = it >= OVM_ROW_FPS && it <= OVM_ROW_GRAPH ? fpso_rows(fo) >> (it - OVM_ROW_FPS) & 1 : it == OVM_ENABLE_CHEATS ? dm_cheats_master() : it == OVM_FRAMEGEN ? fg & 1 : st >> ovm_bit(it) & 1;
+                off = it == OVM_FRAMEGEN && !(fg >> 1 & 1);   // no Lossless.dll: the row says so, off
+                if (off) on = 0;
+                snprintf(word, sizeof word, "%s", off ? "No DLL" : on ? "ON" : "OFF");
+            }
         }
         float cl = slider ? r[0] + rw * 0.40f : seg ? segx : pill ? pillx : button ? bx : x1 - sw - gap - cv_text_w(word, is);
         char count[16] = "";
@@ -535,6 +538,7 @@ static void ov_menu_panel(const ov_canvas *cv, int st, int fg, const float p[4])
             for (int k = 0; k < 2; k++) { char sb[16]; cv_fit(sb, sizeof sb, segs[k], is, segw * 0.92f);
                 cv_text(cv, segx + k * segw + (segw - cv_text_w(sb, is)) / 2, cy, sb, is, k == cur ? C_WHITE : C_DIM); }
         } else {   // a switch
+            if (it == OVM_FG_IMPORT) { cv_text(cv, x1 - cv_text_w(word, is), cy, word, is, fg >> 1 & 1 ? C_WHITE : C_ACCENT); continue; }   // the detection row: no toggle
             float sx0 = x1 - sw;
             cv_rrect(cv, sx0, cy - sh / 2, x1, cy + sh / 2, sh / 2, on ? C_ACCENT : C_OFF);
             cv_disc(cv, on ? x1 - sh / 2 : sx0 + sh / 2, cy, sh / 2 - fmaxf(2, sh * 0.10f), on ? C_WHITE : off ? C_DIM : C_KNOB_OFF);
@@ -611,7 +615,15 @@ static void ov_save_panel(const ov_canvas *cv, int st, const float p[4]) {
 }
 static void ov_cheat_panel(const ov_canvas *cv, int st, const float p[4]) {
     ov_srow rows[OVM_ROWS]; if (!dm_cheat_rows(rows)) return;
+    char pg[16]; snprintf(pg, sizeof pg, "%s", rows[0].right); rows[0].right[0] = 0;   // the page number goes between the arrows (overlay_layout.h ov_ch_page_slot: the same rectangles the touches use)
     ov_rows_panel(cv, st, rows, p);
+    if (!pg[0]) return;
+    int is = ov_menu_font(p); float r[4];
+    for (int k = 0; k < 2; k++) { ov_ch_page_slot(p, k ? 2 : 0, r); const char *g = k ? ">" : "<";
+        cv_rrect(cv, r[0], r[1], r[0] + r[2], r[1] + r[3], r[3] * 0.30f, C_OFF);
+        cv_text(cv, r[0] + (r[2] - cv_text_w(g, is)) / 2, r[1] + r[3] / 2, g, is, C_WHITE); }
+    ov_ch_page_slot(p, 1, r); char shown[16]; cv_fit(shown, sizeof shown, pg, is, r[2] * 0.92f);
+    cv_text(cv, r[0] + (r[2] - cv_text_w(shown, is)) / 2, r[1] + r[3] / 2, shown, is, C_DIM);
 }
 static void ov_panel(int st, int fg) {   // the pause menu, the text entry or the layout editor, for menu state st (dm_menu_state), into the panel's rows of the upload buffer
     ov_canvas cv = {g_ov.px, g_ov.w, 0, g_ov.h + g_ov.sh, g_ov.pw, g_ov.ph};

@@ -197,7 +197,7 @@ enum { OVM_OVERLAY, OVM_OPACITY, OVM_EDIT, OVM_RUMBLE, OVM_FPS, OVM_SR, OVM_SHAR
 #define OVM_VIEW 7       // the tab's rows the drawer shows at once: the rest scroll under them (the FPS tab's ten need three)
 #define OVM_ROWS (OVM_VIEW + 3)   // the tabs, the rows, Resume, Exit
 static const int OVM_TAB_ITEMS[OVM_TABS][OVM_PER_TAB] = {{OVM_OVERLAY, OVM_OPACITY, OVM_EDIT, OVM_RUMBLE, OVM_PAD, OVM_AUDIO, -1, -1, -1, -1},
-                                                         {OVM_SR, OVM_SHARP, OVM_FRAMEGEN, OVM_FG_TARGET, OVM_FG_IMPORT, OVM_MODE, OVM_EXPORT, OVM_IMPORT, -1, -1},
+                                                         {OVM_SR, OVM_SHARP, OVM_FG_IMPORT, OVM_FRAMEGEN, OVM_FG_TARGET, OVM_MODE, OVM_EXPORT, OVM_IMPORT, -1, -1},
                                                          {OVM_FPS, OVM_ROW_FPS, OVM_ROW_SOC, OVM_ROW_BAT, OVM_ROW_DRV, OVM_ROW_GRAPH, OVM_POS, OVM_COLOUR, OVM_OUTLINE, OVM_SIZE},
                                                          {OVM_ENABLE_CHEATS, OVM_CHEATS, -1, -1, -1, -1, -1, -1, -1, -1}};
 static const char *const OVM_TAB_NAMES[OVM_TABS] = {"Pad", "Game", "FPS", "Cheats"};
@@ -220,15 +220,10 @@ static inline int fpso_step(int o, int item) {   // the options after a press on
 }
 int dm_menu_audio_available(void);
 int dm_menu_lossless_import_available(void);
-static inline int ov_menu_avail(int item) {
-    return item >= 0 && !(item == OVM_AUDIO && !dm_menu_audio_available()) && !(item == OVM_FG_IMPORT && !dm_menu_lossless_import_available());
+static inline int ov_menu_avail(int item) {   // the Lossless.dll row always shows: its state says whether the DLL is there (the frame generation switch needs it)
+    return !(item == OVM_AUDIO && !dm_menu_audio_available());
 }
-// a row that cannot show (no audio activity, no Lossless.dll) leaves no gap: the tab's rows are counted and indexed over the ones that show
-static inline int ov_menu_shown(int tab, int k) {   // the tab's k-th row that shows, -1 past the last
-    for (int i = 0; i < OVM_PER_TAB; i++) { int it = ov_menu_raw(tab, i); if (it < 0) return -1; if (ov_menu_avail(it) && k-- == 0) return it; }
-    return -1;
-}
-static inline int ov_menu_nrows(int tab) { int n = 0; while (ov_menu_shown(tab, n) >= 0) n++; return n; }
+static inline int ov_menu_nrows(int tab) { int n = OVM_PER_TAB; while (n > 0 && ov_menu_raw(tab, n - 1) < 0) n--; return n; }
 static inline int ov_menu_max_scroll(int tab) { int n = ov_menu_nrows(tab); return n > OVM_VIEW ? n - OVM_VIEW : 0; }
 // row: the drawer's slot (0 the tabs, 1..OVM_VIEW the tab's rows from the first shown, OVM_VIEW + 1 Resume, OVM_VIEW + 2 Exit); scroll: the tab's first row shown
 static inline int ov_menu_item(int tab, int row, int scroll) {
@@ -236,7 +231,8 @@ static inline int ov_menu_item(int tab, int row, int scroll) {
     if (row == OVM_VIEW + 1) return OVM_RESUME;
     if (row == OVM_VIEW + 2) return OVM_EXIT;
     if (row < 1 || row > OVM_VIEW) return -1;
-    return ov_menu_shown(tab, scroll + row - 1);
+    int item = ov_menu_raw(tab, scroll + row - 1);
+    return item >= 0 && ov_menu_avail(item) ? item : -1;
 }
 #define OV_MENU_ROW 0.096f   // a row's height, of the window's height
 #define OV_MENU_W 0.78f      // the drawer's width, of the window's height (a narrow window takes 92% of its width)
@@ -324,11 +320,19 @@ typedef struct { int style; char left[80], right[40]; } ov_srow;
 int dm_save_rows(ov_srow rows[OVM_ROWS]);   // front_android.c: the picker's rows, 0 when it is not open
 
 // ---- the cheats picker (front_android.c, from the menu's Cheats tab): the same panel, one row per cheat of the running build's Atmosphère file (hle_cheats.c),
-// OVM_ROWS - 2 at a time, scrolling (a drag; up and down at the window's edge; L and R a window), its name and on / off state, then Back.
+// OVM_ROWS - 2 to a page (the title row's < and > arrows, L and R, or a sideways swipe), its name and on / off state, then Back.
 // The master switch is the menu's own Enable cheats row (OVM_ENABLE_CHEATS), above the list: every launch starts with it off, one tap runs the saved set,
 // turning it off puts back the code words the passes changed, and the title says "(off)" while it is. dm_menu_state: bit 19, bits 4..7 the highlighted row + 1,
-// bits 20..27 the picker's edit count (a toggle, a scroll, the host's cheat states) ----
+// bits 20..27 the picker's edit count (a toggle, a page, the host's cheat states) ----
 #define OVC_ST 0x80000
+// the title row's page controls, at its right end: back, the page number, forward. front_android.c's touch and gfx_vk_present.c's drawing use these same rectangles
+static inline void ov_ch_page_slot(const float p[4], int which, float r[4]) {   // which: 0 back, 1 the number, 2 forward
+    float row[4]; ov_menu_rowrect(p, 0, row);
+    float h = row[3] * 0.56f, w = h, x1 = row[0] + row[2] - row[3] * 0.10f, nw = row[3] * 1.9f;
+    r[1] = row[1] + (row[3] - h) / 2; r[3] = h;
+    r[0] = which == 0 ? x1 - 2 * w - nw : which == 1 ? x1 - w - nw : x1 - w;
+    r[2] = which == 1 ? nw : w;
+}
 int dm_cheat_rows(ov_srow rows[OVM_ROWS]);   // front_android.c: the picker's rows, 0 when it is not open
 
 // ---- the text entry's keyboard (front_android.c front_text_input, drawn by gfx_vk_present.c ov_text_panel), in the pause menu's panel rectangle ----
