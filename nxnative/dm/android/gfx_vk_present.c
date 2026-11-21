@@ -1150,6 +1150,19 @@ static int framegen_output_rate(int target, uint64_t refresh_ns) {
     return refresh_fps < target ? refresh_fps : target;
 }
 
+// A PC frame-generation tool locks its output rate and lets its queue absorb the source's
+// jitter instead of skipping generated frames; the FIFO's 60 Hz back-pressure can do the
+// same here. env.txt DM_VK_FG_LOCK=1 pairs every real frame near half the target, so a fast
+// sample costs a delayed present rather than a missing one (the skips cost 3-5 fps at 30->60).
+static int framegen_lock(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("DM_VK_FG_LOCK");
+        on = e && atoi(e);
+        if (on) VKLOG("[fg] locked output: a pair for every real frame near half the target");
+    }
+    return on;
+}
 // A pair uses one additional frame. When a game supplies more than half of
 // the desired display fps on its own, generate only the share still needed.
 static int framegen_pair_budget(framegen_cadence *cadence, int fps) {
@@ -1157,6 +1170,7 @@ static int framegen_pair_budget(framegen_cadence *cadence, int fps) {
     double extra = cadence->interval_ns * fps / 1e9 - 1;
     if (extra <= 0.02) { cadence->target_credit = 0; return -1; }
     if (extra >= 0.98) { cadence->target_credit = 0; return 1; }
+    if (framegen_lock() && extra >= 0.85) { cadence->target_credit = 0; return 1; }
     cadence->target_credit += extra;
     if (cadence->target_credit < 1.0) return 0;
     cadence->target_credit -= 1.0;
