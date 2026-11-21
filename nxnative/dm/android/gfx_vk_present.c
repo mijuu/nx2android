@@ -93,7 +93,10 @@ __attribute__((weak)) void dm_overlay_knob(int stick, float *dx, float *dy) { (v
 __attribute__((weak)) int64_t dm_overlay_pressed(int ctl, uint64_t bit) { (void)ctl; (void)bit; return 0; }
 __attribute__((weak)) int dm_menu_state(void) { return -1; }
 __attribute__((weak)) int dm_menu_fg_bits(void) { return 0; }
+static uint64_t mono_ns(void);   // the overlay's clock (below), used by the menu's slide and the rows' scrolling text
 __attribute__((weak)) int64_t dm_menu_anim_ns(void) { return 0; }   // front_android.c: when the drawer began to slide in
+__attribute__((weak)) int64_t dm_menu_marq_ns(void) { return 0; }   // front_android.c: when a tapped row's text began to scroll
+__attribute__((weak)) int dm_menu_marq_row(void) { return -1; }     // ...that row, in the drawer or a picker (-1 none)
 __attribute__((weak)) int dm_menu_scroll(void) { return 0; }        // front_android.c: the open tab's first row shown
 __attribute__((weak)) int dm_menu_audio_available(void) { return 0; }
 __attribute__((weak)) int dm_fps_opts(void) { return FPSO_DEFAULT; }   // front_android.c: the counter's options, packed (overlay_layout.h fpso_*)
@@ -260,7 +263,7 @@ static void barrier(VkCommandBuffer cb, VkImage img, VkImageLayout from, VkImage
 enum { SP_DISC = OV_N, SP_BLACK, SP_WHITE, SP_ACCENT, SP_GREEN, SP_AMBER, SP_RED, SP_GREY, SP_N };   // (black, white, accent: solid blocks, the dimming and the layout editor's frames; green, amber, red, grey: the frame-time graph's bars and target line)
 #define OV_FPS_CHARS "0123456789 FPS-CBATOURNIQM.DELGVY"   // (Y: DISPLAY with frame generation)   // (the temperature rows: "SOC 52C", "BAT 38C"; the driver row: "TURNIP 27.0.0", "QCOM 512.676.53", "NVIDIA ...", "ID 1AB2 ...")
 static struct { VkImage img; VkDeviceMemory mem; VkImageView view; VkSampler samp; VkDescriptorSetLayout dsl; VkPipelineLayout layout; VkDescriptorPool pool; VkDescriptorSet set;
-                VkPipeline pipe; VkFormat pfmt; uint32_t w, h, sh, pw, ph, gh, gs, gl, cpr, pad; int fk; VkBuffer up; VkDeviceMemory upm; uint8_t *px; int uploaded, panel, pfo, pfg, lay, cver; float sp[SP_N][4];
+                VkPipeline pipe; VkFormat pfmt; uint32_t w, h, sh, pw, ph, gh, gs, gl, cpr, pad; int fk; VkBuffer up; VkDeviceMemory upm; uint8_t *px; int uploaded, panel, pfo, pfg, lay, cver; int64_t mqns, mquntil; float sp[SP_N][4];
                 VkRenderPass rp; VkFramebuffer fb[8]; VkImageView fbview[8]; VkExtent2D fbext[8]; } g_ov;
 static struct { const ov_theme *t; VkImage img; VkDeviceMemory mem; VkImageView view; VkDescriptorSet set; VkBuffer up; VkDeviceMemory upm; uint32_t upk; int ready; } g_tt[2];   // per layout
 // Without dynamic rendering (a Vulkan 1.1 / 1.2 device, V.has_dynrender) the overlay draws in a render pass object over the swapchain image: one pass for the swapchain's
@@ -379,16 +382,29 @@ static void cv_ring(const ov_canvas *cv, float cx, float cy, float r, float t, c
     }
 }
 static float cv_text_w(const char *s, int scale) { return (float)(pf_width(dm_overlay_font(), s) * scale); }
-typedef struct { const ov_canvas *cv; const uint8_t *c; } cv_ink;
-static void cv_text_plot(void *u, int x, int y) { const cv_ink *k = u; cv_blend(k->cv, x, y, k->c, 1); }
+typedef struct { const ov_canvas *cv; const uint8_t *c; int clip0, clip1; } cv_ink;   // clip1: the first column not drawn (a row's text scrolled past its edge)
+static void cv_text_plot(void *u, int x, int y) { const cv_ink *k = u; if (x < k->clip0 || x >= k->clip1) return; cv_blend(k->cv, x, y, k->c, 1); }
 static void cv_text(const ov_canvas *cv, float x, float cy, const char *s, int scale, const uint8_t c[4]) {   // x: the left edge
-    cv_ink k = {cv, c}; pf_draw(dm_overlay_font(), s, (int)(x + 0.5f), (int)(cy + PF_CAP * scale / 2.0f + 0.5f), scale, cv_text_plot, &k);
+    cv_ink k = {cv, c, (int)cv->x0, (int)(cv->x0 + cv->w)}; pf_draw(dm_overlay_font(), s, (int)(x + 0.5f), (int)(cy + PF_CAP * scale / 2.0f + 0.5f), scale, cv_text_plot, &k);
+}
+static void cv_text_clip(const ov_canvas *cv, float x, float cy, const char *s, int scale, const uint8_t c[4], float x0, float x1) {   // text between two columns
+    cv_ink k = {cv, c, (int)x0, (int)(x1 + 0.5f)}; pf_draw(dm_overlay_font(), s, (int)(x + 0.5f), (int)(cy + PF_CAP * scale / 2.0f + 0.5f), scale, cv_text_plot, &k);
 }
 static void cv_fit(char *out, size_t cap, const char *s, int scale, float maxw) {   // s into out, cut from the end until it fits: one letter size on every row
     snprintf(out, cap, "%s", s);
     while (out[0] && cv_text_w(out, scale) > maxw) pf_chop(out, strlen(out));
 }
 static const uint8_t C_WHITE[4] = {255, 255, 255, 255}, C_ACCENT[4] = {255, 60, 142, 255}, C_HOT[4] = {255, 64, 48, 255};
+// A row whose text does not fit scrolls after a tap (front_android.c dm_menu_marq_*: the drawer's rows, or a picker's): hold, slide left by the overflow, hold,
+// then the row's text is ordinary again. The present loop re-presents while g_ov.mquntil runs (ov_panel sets it)
+#define MQ_SEC 3.0f
+static int g_mq_row = -1; static int64_t g_mq_ns; static int g_mq_drawn;
+static float mq_offset(uint64_t now, float overflow) {
+    float t = (float)(now - (uint64_t)g_mq_ns) / 1e9f;
+    if (t < 0.5f) return 0;
+    if (t < 2.5f) return overflow * (t - 0.5f) / 2.0f;
+    return overflow;
+}
 static void ov_menu_icon(const ov_canvas *cv, const ov_ctl *c, const float b[4]) {   // the menu button: a dark pill with a ring and three bars
     static const uint8_t fill[4] = {20, 20, 26, 170}, ring[4] = {255, 255, 255, 210};
     float r = b[3], t = fmaxf(2, r * 0.07f);
@@ -506,8 +522,13 @@ static void ov_menu_panel(const ov_canvas *cv, int st, int fg, const float p[4])
             cl = bx - gap - cv_text_w(count, is);
         }
         float lmax = (it == OVM_EXPORT && (st >> 20 & 7) != OVX_IDLE) ? rw * 0.40f : cl - gap - r[0] - rh * 0.10f;
-        char lb[40]; cv_fit(lb, sizeof lb, OVM_LABELS[it], is, lmax > rw * 0.15f ? lmax : rw * 0.15f);
-        cv_text(cv, r[0] + rh * 0.10f, cy, lb, is, row == sel ? C_WHITE : C_DIM);
+        char lb[40]; const char *full = OVM_LABELS[it];
+        float lw = lmax > rw * 0.15f ? lmax : rw * 0.15f, lx = r[0] + rh * 0.10f;
+        cv_fit(lb, sizeof lb, full, is, lw);
+        const uint8_t *lc = row == sel ? C_WHITE : C_DIM;
+        if (row == g_mq_row && g_mq_ns && cv_text_w(full, is) > lw && mono_ns() - (uint64_t)g_mq_ns < (uint64_t)(MQ_SEC * 1e9f)) {   // a tapped row whose name does not fit scrolls
+            cv_text_clip(cv, lx - mq_offset(mono_ns(), cv_text_w(full, is) - lw), cy, full, is, lc, lx, lx + lw); g_mq_drawn = 1;
+        } else cv_text(cv, lx, cy, lb, is, lc);
         if (slider) {   // a slider: its track, filled to the value, the knob and the percent
             int val = it == OVM_OPACITY ? op : (st >> 13 & 7) * 25;
             float span = it == OVM_OPACITY ? (float)(OV_OPACITY_MAX - OV_OPACITY_MIN) : 100.0f, lvl = it == OVM_OPACITY ? (float)(op - OV_OPACITY_MIN) : (float)val;
@@ -604,7 +625,11 @@ static void ov_rows_panel(const ov_canvas *cv, int st, ov_srow rows[OVM_ROWS], c
         char left[80], right[40];
         cv_fit(left, sizeof left, q->left, is, (x1 - x0) * 0.64f);
         cv_fit(right, sizeof right, q->right, is, (x1 - x0) * 0.32f);
-        cv_text(cv, x0, cy, left, is, q->style == OVS_TITLE || row == sel ? C_WHITE : C_DIM);
+        const uint8_t *lc = q->style == OVS_TITLE || row == sel ? C_WHITE : C_DIM;
+        float room = (x1 - x0) - (q->right[0] ? gap + cv_text_w(right, is) : 0);
+        if (row == g_mq_row && g_mq_ns && cv_text_w(q->left, is) > room && mono_ns() - (uint64_t)g_mq_ns < (uint64_t)(MQ_SEC * 1e9f)) {   // a tapped name that does not fit scrolls
+            cv_text_clip(cv, x0 - mq_offset(mono_ns(), cv_text_w(q->left, is) - room), cy, q->left, is, lc, x0, x0 + room); g_mq_drawn = 1;
+        } else cv_text(cv, x0, cy, left, is, lc);
         if (q->right[0]) cv_text(cv, x1 - cv_text_w(right, is), cy, right, is, C_DIM);
         if (q->style == OVS_TITLE) cv_rrect(cv, r[0], r[1] + rh - 1, r[0] + rw, r[1] + rh, 0.5f, C_LINE);
     }
@@ -630,11 +655,14 @@ static void ov_panel(int st, int fg) {   // the pause menu, the text entry or th
     for (uint32_t y = 0; y < g_ov.ph; y++) memset(g_ov.px + 4 * ((size_t)(cv.y0 + y) * g_ov.w), 0, (size_t)g_ov.pw * 4);
     float d[4]; ov_menu_rect((float)g_sext.width, (float)g_sext.height, d);
     float p[4] = {d[0] / 2, d[1] / 2, d[2] / 2, d[3] / 2};   // the drawer in the raster's pixels (half the window's)
+    g_mq_row = dm_menu_marq_row(); g_mq_ns = dm_menu_marq_ns(); g_mq_drawn = 0;
+    if (g_mq_row >= 0 && (!g_mq_ns || mono_ns() - (uint64_t)g_mq_ns >= (uint64_t)(MQ_SEC * 1e9f))) g_mq_row = -1;   // the scroll ran its course: the row is ordinary again
     if (st & OVT_ST) ov_text_panel(&cv);   // a text entry is open (dm_menu_state), over the whole window
     else if (st & OVE_ST) ov_edit_panel(&cv, st, (float)g_sext.width, (float)g_sext.height);
     else if (st & OVS_ST) ov_save_panel(&cv, st, p);
     else if (st & OVC_ST) ov_cheat_panel(&cv, st, p);
     else ov_menu_panel(&cv, st, fg, p);
+    g_ov.mqns = dm_menu_marq_ns(); g_ov.mquntil = g_mq_drawn ? g_mq_ns + (int64_t)((MQ_SEC + 0.2f) * 1e9f) : 0;   // (the present loop re-presents until then)
 }
 // The phone window uses the same menu raster as Vulkan, independently of the external swapchain.
 JNIEXPORT jint JNICALL Java_org_nx2a_ExternalActivity_externalMenuState(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_menu_state(); }
@@ -1024,13 +1052,15 @@ static int overlay_ready(VkCommandBuffer cb, uint32_t k, int menu) {   // k: thi
         g_ov.uploaded = 0; g_ov.panel = -1;
     }
     int fg_state = dm_menu_fg_bits();   // the frame generation rows' state, in the panel's key (dm_menu_state's bits are full)
+    int64_t mqns = dm_menu_marq_ns();
+    int mq = dm_menu_marq_row() >= 0 && mqns && (mqns != g_ov.mqns || (g_ov.mquntil && mono_ns() < (uint64_t)g_ov.mquntil));   // a tapped row's text still scrolling
     uint32_t y0 = 0, rows = g_ov.h + g_ov.sh + g_ov.ph + g_ov.gh;   // the rows to upload
-    if (g_ov.uploaded && menu >= 0 && (menu != g_ov.panel || fo != g_ov.pfo || fg_state != g_ov.pfg)) {   // only the panel, after the last copy out of the buffer has run
+    if (g_ov.uploaded && menu >= 0 && (mq || menu != g_ov.panel || fo != g_ov.pfo || fg_state != g_ov.pfg)) {   // only the panel, after the last copy out of the buffer has run
         VkFence f[8]; uint32_t n = 0; for (uint32_t i = 0; i < 8; i++) if (i != k) f[n++] = g_pfence[i];
         vkWaitForFences(V.dev, n, f, 1, 1000000000ull);
         y0 = g_ov.h + g_ov.sh; rows = g_ov.ph; g_ov.uploaded = 0;
     }
-    if (menu >= 0 && (menu != g_ov.panel || fo != g_ov.pfo || fg_state != g_ov.pfg)) { ov_panel(menu, fg_state); g_ov.panel = menu; g_ov.pfo = fo; g_ov.pfg = fg_state; }
+    if (menu >= 0 && (mq || menu != g_ov.panel || fo != g_ov.pfo || fg_state != g_ov.pfg)) { ov_panel(menu, fg_state); g_ov.panel = menu; g_ov.pfo = fo; g_ov.pfg = fg_state; }
     if (!g_ov.uploaded) {
         VkImageMemoryBarrier b = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, NULL, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, y0 ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, g_ov.img, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
@@ -1639,7 +1669,8 @@ static void *present_thread(void *arg) {
                 if (redraw && swap_make()) present_window(last.im, last.has_crop ? last.crop : NULL, -1, 0, PRESENT_REAL);
                 pthread_mutex_unlock(&g_present_mu);
             }
-            if (redraw && dm_menu_state() >= 0 && dm_menu_anim_ns() && mono_ns() - dm_menu_anim_ns() < 240000000ll) dm_overlay_redraw();   // the drawer still sliding: present it again
+            if (redraw && dm_menu_state() >= 0 && ((dm_menu_anim_ns() && mono_ns() - dm_menu_anim_ns() < 240000000ll)   // the drawer still sliding
+                                           || (g_ov.mquntil && mono_ns() < (uint64_t)g_ov.mquntil))) dm_overlay_redraw();   // a row's text still scrolling
             continue;
         }
         typeof(g_pq[0]) e = g_pq[g_pq_tail % PQ_N];

@@ -648,8 +648,14 @@ static int g_menu_ptr = -1, g_menu_row = -2;
 static _Atomic int g_menu_scroll, g_menu_exit_armed;   // the open tab's first row shown; Exit asked once (a second press ends the game)
 static _Atomic int64_t g_menu_anim;                   // when the drawer started to slide in (gfx_vk_present.c ov_render)
 static float g_menu_y0; static int g_menu_scroll0, g_menu_scrolled;   // a finger's drag of the rows
+static _Atomic int g_marq_row = -1;                   // a tapped row whose text does not fit: gfx_vk_present.c scrolls it, and re-presents while it does (-1 none)
+static _Atomic int64_t g_marq_ns;                     // when that row's text started to scroll
 int dm_menu_scroll(void) { return atomic_load(&g_menu_scroll); }
 int64_t dm_menu_anim_ns(void) { return atomic_load(&g_menu_anim); }
+int dm_menu_marq_row(void) { return atomic_load(&g_marq_row); }
+int64_t dm_menu_marq_ns(void) { return atomic_load(&g_marq_ns); }
+static void menu_marq(int row) { atomic_store(&g_marq_row, row); atomic_store(&g_marq_ns, mono_ns()); dm_overlay_redraw(); }
+static void menu_marq_clear(void) { if (atomic_exchange(&g_marq_row, -1) >= 0) dm_overlay_redraw(); }
 static _Atomic int g_tx_ver;   // the text entry's edit count: the panel is drawn again when it changes
 static _Atomic int g_ed_st;    // the layout editor's state for dm_menu_state (overlay_layout.h OVE_ST)
 static _Atomic int g_sp_on, g_sp_hi = -1, g_sp_ver;   // the save picker (below): open, its highlighted row, its edit count
@@ -686,7 +692,7 @@ int dm_overlay_sharp(void) { return atomic_load(&g_set_sharp); }   // its Sharpn
 static void menu_open(int hi) {
     if (!atomic_load(&g_running) || atomic_exchange(&g_menu, 1)) return;
 atomic_store(&g_menu_hi, hi); g_menu_ptr = -1;
-    atomic_store(&g_ch_on, 0); g_ch_ptr = -1;
+    atomic_store(&g_ch_on, 0); g_ch_ptr = -1; atomic_store(&g_marq_row, -1);
     atomic_store(&g_menu_scroll, 0); atomic_store(&g_menu_exit_armed, 0); atomic_store(&g_menu_anim, mono_ns());
     if (atomic_load(&g_sv_st) != OVX_BUSY) atomic_store(&g_sv_st, OVX_IDLE);   // the last export's note goes (one still copying stays)
     dm_input_set(0, 0, 0, 0, 0); dm_touch_set(NULL, 0); atomic_store(&g_touch_btn, 0);   // nothing stays pressed in the game
@@ -704,7 +710,7 @@ static void menu_close(void) {
     if (atomic_load(&g_sp_on)) { sp_back(); return; }    // the save picker: back a step
     if (atomic_load(&g_ch_on)) { ch_back(); return; }    // the cheats picker: back to the menu
     if (!atomic_exchange(&g_menu, 0)) return;
-    g_menu_ptr = -1; atomic_store(&g_menu_t, 0); atomic_store(&g_menu_exit_armed, 0);
+    menu_marq_clear(); g_menu_ptr = -1; atomic_store(&g_menu_t, 0); atomic_store(&g_menu_exit_armed, 0);
     hold_sync(); dm_haptics_suspend(4, 0); dm_overlay_redraw();
     LOG("[menu] closed: the game goes on (gamepad %s, opacity %d%%, rumble %s, face buttons by %s, frame rate %s %#x, super resolution %s (%d%% sharp), %s)", atomic_load(&g_set_overlay) ? "on" : "off", atomic_load(&g_set_opacity),
         atomic_load(&g_set_rumble) ? "on" : "off", pad_labels() ? "label" : "position", atomic_load(&g_set_fps) ? "shown" : "hidden", atomic_load(&g_fps_opts), atomic_load(&g_set_sr) ? "on" : "off",
@@ -718,7 +724,7 @@ static void menu_opacity(int v) {   // the slider: a new value is drawn at once 
     v = v < OV_OPACITY_MIN ? OV_OPACITY_MIN : v > OV_OPACITY_MAX ? OV_OPACITY_MAX : v;
     if (atomic_exchange(&g_set_opacity, v) != v) { dm_haptics_android_tap(); dm_overlay_redraw(); }
 }
-static void menu_tab(int t) { t = (t % OVM_TABS + OVM_TABS) % OVM_TABS; if (atomic_exchange(&g_menu_tab, t) != t) { atomic_store(&g_menu_scroll, 0); dm_haptics_android_tap(); } dm_overlay_redraw(); }
+static void menu_tab(int t) { t = (t % OVM_TABS + OVM_TABS) % OVM_TABS; if (atomic_exchange(&g_menu_tab, t) != t) { atomic_store(&g_menu_scroll, 0); menu_marq_clear(); dm_haptics_android_tap(); } dm_overlay_redraw(); }
 static void menu_set_fg_choice(int choice) {
     if (choice < 0) return;
     int target = choice ? 0 : 60;
@@ -823,7 +829,7 @@ static void menu_touch(AInputEvent *e, float W, float H) {   // a press on a row
             if (g_menu_row >= 1 && g_menu_row <= OVM_VIEW) {   // a finger on the rows: the list follows it, a row at a time
                 float rh = p[3] * OV_MENU_ROW; int want = g_menu_scroll0 + (int)lroundf((g_menu_y0 - ky) / rh), maxs = ov_menu_max_scroll(tab);
                 want = want < 0 ? 0 : want > maxs ? maxs : want;
-                if (want != atomic_load(&g_menu_scroll)) { atomic_store(&g_menu_scroll, want); g_menu_scrolled = 1; atomic_store(&g_menu_hi, -1); dm_overlay_redraw(); }
+                if (want != atomic_load(&g_menu_scroll)) { atomic_store(&g_menu_scroll, want); g_menu_scrolled = 1; atomic_store(&g_menu_hi, -1); menu_marq_clear(); dm_overlay_redraw(); }
                 continue;
             }
             int r = ov_menu_row_at(kx, ky, W, H), hi = r == g_menu_row && r >= 0 && ov_menu_item(tab, r, scroll) >= 0 ? r : -1;
@@ -833,7 +839,7 @@ static void menu_touch(AInputEvent *e, float W, float H) {   // a press on a row
         int down = g_menu_row, moved = g_menu_scrolled; g_menu_ptr = -1; g_menu_scrolled = 0; atomic_store(&g_menu_hi, -1);
         if (moved) { dm_overlay_redraw(); return; }   // a scroll is not a tap
         if (down >= 0 && (item == OVM_OPACITY || item == OVM_SHARP)) { settings_save(); dm_overlay_redraw(); }
-        else if (row == down && item >= 0 && item != OVM_TAB) menu_do(item);
+        else if (row == down && item >= 0 && item != OVM_TAB) { if (row >= 1) menu_marq(row); menu_do(item); }   // a tapped row's text scrolls when it does not fit
         else if (row == down && (row == -2 || row == -3)) { dm_haptics_android_tap(); menu_close(); }
         else dm_overlay_redraw();
     } else if (act == AMOTION_EVENT_ACTION_CANCEL) { g_menu_ptr = -1; g_menu_scrolled = 0; atomic_store(&g_menu_hi, -1); dm_overlay_redraw(); }
@@ -846,8 +852,8 @@ static void menu_key(uint64_t bit) {   // a controller key pressed while the men
     if (atomic_load(&g_ch_on)) { ch_key(bit); return; }
     int hi = atomic_load(&g_menu_hi), tab = atomic_load(&g_menu_tab), scroll = atomic_load(&g_menu_scroll), item = hi >= 0 ? ov_menu_item(tab, hi, scroll) : -1;
     if (bit == DM_BTN_UP || bit == DM_BTN_DOWN) {
-        if (bit == DM_BTN_UP && hi == 1 && scroll > 0) { atomic_store(&g_menu_scroll, scroll - 1); dm_overlay_redraw(); return; }   // the selection at the edge: the list moves under it
-        if (bit == DM_BTN_DOWN && hi == OVM_VIEW && scroll < ov_menu_max_scroll(tab)) { atomic_store(&g_menu_scroll, scroll + 1); dm_overlay_redraw(); return; }
+        if (bit == DM_BTN_UP && hi == 1 && scroll > 0) { atomic_store(&g_menu_scroll, scroll - 1); menu_marq_clear(); dm_overlay_redraw(); return; }   // the selection at the edge: the list moves under it
+        if (bit == DM_BTN_DOWN && hi == OVM_VIEW && scroll < ov_menu_max_scroll(tab)) { atomic_store(&g_menu_scroll, scroll + 1); menu_marq_clear(); dm_overlay_redraw(); return; }
         for (int k = 0; k < OVM_ROWS; k++) { hi = hi < 0 ? (bit == DM_BTN_UP ? OVM_ROWS - 1 : 1) : (hi + (bit == DM_BTN_UP ? OVM_ROWS - 1 : 1)) % OVM_ROWS; if (ov_menu_item(tab, hi, scroll) >= 0) break; }
         atomic_store(&g_menu_hi, hi); dm_overlay_redraw();
     } else if ((bit == DM_BTN_LEFT || bit == DM_BTN_RIGHT) && item == OVM_OPACITY) { menu_opacity(atomic_load(&g_set_opacity) + (bit == DM_BTN_LEFT ? -5 : 5)); settings_save(); }
@@ -860,7 +866,7 @@ static void menu_key(uint64_t bit) {   // a controller key pressed while the men
         if (atomic_load(&g_menu_scroll) > ov_menu_max_scroll(t2)) atomic_store(&g_menu_scroll, ov_menu_max_scroll(t2));
         if (hi > 0 && ov_menu_item(t2, hi, atomic_load(&g_menu_scroll)) < 0) atomic_store(&g_menu_hi, OVM_VIEW + 1);   // (the other tab has fewer rows: Resume)
     }
-    else if (bit == DM_BTN_A) menu_do(hi < 0 ? OVM_RESUME : item);
+    else if (bit == DM_BTN_A) { if (hi >= 1) menu_marq(hi); menu_do(hi < 0 ? OVM_RESUME : item); }
     else if (bit == DM_BTN_B || bit == DM_BTN_PLUS) menu_close();
 }
 
@@ -895,7 +901,7 @@ static void sp_open(void) {
     pthread_mutex_lock(&g_sp_mu);
     int n = g_sp.n = dm_saves_list(g_sp.e, SP_MAX); g_sp.page = g_sp.confirm = g_sp.closing = 0; g_sp.ptr = -1;
     pthread_mutex_unlock(&g_sp_mu);
-    atomic_store(&g_sp_hi, n ? 1 : OVM_ROWS - 1); atomic_store(&g_sp_on, 1); sp_changed();
+    menu_marq_clear(); atomic_store(&g_sp_hi, n ? 1 : OVM_ROWS - 1); atomic_store(&g_sp_on, 1); sp_changed();
     LOG("[saves] picker opened: %d saves in %s", n, dm_saves_dir());
 }
 static void sp_back(void) {   // the confirmation → the list → the menu (nothing once the import is under way)
@@ -903,7 +909,7 @@ static void sp_back(void) {   // the confirmation → the list → the menu (not
     if (closing) return;
     dm_haptics_android_tap();
     if (confirm) { atomic_store(&g_sp_hi, 1); sp_changed(); return; }
-    atomic_store(&g_sp_on, 0); atomic_store(&g_menu_hi, -1); dm_overlay_redraw();
+    menu_marq_clear(); atomic_store(&g_sp_on, 0); atomic_store(&g_menu_hi, -1); dm_overlay_redraw();
 }
 static void *sp_end(void *a) {   // the panel's note shows for a moment, then the app ends; the next start imports the save (saves_android.c dm_saves_start)
     (void)a; sleep(3); LOG("[saves] the app ends for the import"); _exit(0);
@@ -926,6 +932,7 @@ static void sp_page(int d) {
     if (ok) g_sp.page = p;
     int k = sp_on_page(); pthread_mutex_unlock(&g_sp_mu);
     if (!ok) return;
+    menu_marq_clear();
     int hi = atomic_load(&g_sp_hi); if (hi >= 1 && hi < OVM_ROWS - 1 && hi > k) atomic_store(&g_sp_hi, k);
     dm_haptics_android_tap(); sp_changed();
 }
@@ -949,7 +956,7 @@ static void sp_touch(AInputEvent *e, float W, float H) {   // a row is done when
         if (sp_selectable(row)) { atomic_store(&g_sp_hi, row); sp_changed(); }
     } else if ((act == AMOTION_EVENT_ACTION_UP || act == AMOTION_EVENT_ACTION_POINTER_UP) && id == g_sp.ptr) {
         int down = g_sp.row; g_sp.ptr = -1;
-        if (row == down && row == -2) sp_back(); else if (row == down) sp_do(row);
+        if (row == down && row == -2) sp_back(); else if (row == down) { if (row >= 1) menu_marq(row); sp_do(row); }   // a tapped save's name scrolls when it does not fit
     } else if (act == AMOTION_EVENT_ACTION_CANCEL) g_sp.ptr = -1;
 }
 static void sp_size(char *out, int cap, const dm_save_entry *s) {
@@ -1014,14 +1021,14 @@ static void ch_first(int page) {   // the first selectable row of a page, else B
 }
 static void ch_open(void) {
     dm_cheats_reload();   // a file pushed while the game runs, or its edits, are read now (hle_cheats.c load_all)
-    atomic_store(&g_ch_page, 0); g_ch_ptr = -1; g_ch_row = -2; ch_first(0);
+    atomic_store(&g_ch_page, 0); g_ch_ptr = -1; g_ch_row = -2; ch_first(0); menu_marq_clear();
     atomic_store(&g_ch_on, 1); ch_changed();
     LOG("[cheats] picker opened: %d cheat%s, build %s, folder %s%s", ch_n(), ch_n() == 1 ? "" : "s", dm_cheats_build(), dm_cheats_dir_path(),
         dm_cheats_master() ? "" : " (Enable cheats: off)");
 }
 static void ch_back(void) {
     if (!atomic_exchange(&g_ch_on, 0)) return;
-    g_ch_ptr = -1; atomic_store(&g_ch_hi, -1); ch_changed();
+    menu_marq_clear(); g_ch_ptr = -1; atomic_store(&g_ch_hi, -1); ch_changed();
 }
 static void ch_do(int row) {
     if (!ch_selectable(row)) return;
@@ -1033,6 +1040,7 @@ static void ch_do(int row) {
 static void ch_page(int d) {
     int pages = ch_pages(), p = atomic_load(&g_ch_page) + d;
     if (p < 0 || p >= pages || p == atomic_load(&g_ch_page)) return;
+    menu_marq_clear();
     atomic_store(&g_ch_page, p); ch_first(p); dm_haptics_android_tap(); ch_changed();
 }
 static void ch_key(uint64_t bit) {
@@ -1064,7 +1072,7 @@ static void ch_touch(AInputEvent *e, float W, float H) {   // a row toggles when
         }
         if (arrow) ch_page(arrow);
         else if (fabsf(dx) > W * 0.05f && fabsf(dx) > fabsf(dy) * 1.5f) ch_page(dx < 0 ? 1 : -1);   // a sideways swipe
-        else if (row == down && row == -2) ch_back(); else if (row == down) ch_do(row);
+        else if (row == down && row == -2) ch_back(); else if (row == down) { if (row >= 1) menu_marq(row); ch_do(row); }   // a tapped cheat's name scrolls when it does not fit
     } else if (act == AMOTION_EVENT_ACTION_CANCEL) g_ch_ptr = -1;
 }
 #define CH_ROW(i, st, ...) do { rows[i].style = st; snprintf(rows[i].left, sizeof rows[i].left, __VA_ARGS__); } while (0)
@@ -1118,6 +1126,7 @@ static struct { int ptr, ptr2, sel, held, prompt, dirty, bdown, bar; float gx, g
 static void ed_publish(void) { int hid = g_ed.sel >= 0 && atomic_load(&g_cust[1][dm_overlay_layout()][g_ed.sel][3]);
     atomic_store(&g_ed_st, g_ed.prompt | g_ed.dirty << 1 | (atomic_load(&g_set_grid) ? OVE_GRID_ON : 0) | (hid ? OVE_SEL_HIDDEN : 0) | (g_ed.held + 1) << 4 | (g_ed.sel + 1) << 8); dm_overlay_redraw(); }
 static void ed_open(void) {
+    menu_marq_clear();
     for (int l = 0; l < 2; l++) for (int i = 0; i < OV_N; i++) for (int k = 0; k < CUST_K; k++) atomic_store(&g_cust[1][l][i][k], atomic_load(&g_cust[0][l][i][k]));
     g_ed.ptr = g_ed.ptr2 = g_ed.sel = g_ed.held = g_ed.bdown = -1; g_ed.prompt = g_ed.dirty = g_ed.bar = 0; g_menu_ptr = -1;
     atomic_store(&g_edit, 1); atomic_fetch_add(&g_cust_ver, 1); ed_publish();
