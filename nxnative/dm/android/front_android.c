@@ -815,7 +815,7 @@ static int menu_switch(int it) {   // the rows whose right side is an ON/OFF swi
 }
 static float menu_switch_x(float W, float H, int row) {   // where the switch's status word begins: a tap to its right flips it, the name scrolls
     float p[4], r[4]; ov_menu_rect(W, H, p); ov_menu_rowrect(p, row, r);
-    return r[0] + r[2] - r[3] * 0.10f - r[3] * 0.34f * 1.85f - r[3] * 0.30f - (float)(pf_width(dm_overlay_font(), "No DLL") * ov_menu_font(p));
+    return r[0] + r[2] - r[3] * 0.10f - r[3] * 0.34f * 1.85f - r[3] * 0.30f - (float)(pf_width(dm_overlay_font(), "missing") * ov_menu_font(p));   // "missing": the widest switch word
 }
 static void menu_touch(AInputEvent *e, float W, float H) {   // a press on a row does it when it lifts there; a drag scrolls the rows; a tap outside the drawer or on the menu button closes
     int act = AMotionEvent_getAction(e) & AMOTION_EVENT_ACTION_MASK, ai = AMotionEvent_getAction(e) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
