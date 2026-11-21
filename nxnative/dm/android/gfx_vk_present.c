@@ -395,17 +395,19 @@ static void cv_fit(char *out, size_t cap, const char *s, int scale, float maxw) 
     while (out[0] && cv_text_w(out, scale) > maxw) pf_chop(out, strlen(out));
 }
 static const uint8_t C_WHITE[4] = {255, 255, 255, 255}, C_ACCENT[4] = {255, 60, 142, 255}, C_HOT[4] = {255, 64, 48, 255};
-// A row whose text does not fit scrolls after a tap (front_android.c dm_menu_marq_*: the drawer's rows, or a picker's): hold, slide left by the overflow, hold,
-// then again, until the row is let go (another tab or page, the picker closed, the menu closed). The present loop re-presents while it runs (g_ov.mqon, ov_panel sets it)
-#define MQ_HOLD 0.6f
-#define MQ_SLIDE 2.4f
-#define MQ_GAP 0.4f
+// A row whose text does not fit scrolls after a tap (front_android.c dm_menu_marq_*: the drawer's rows, or a picker's), like a ticker: the name slides left at
+// a constant pace, the name after it a gap behind, and the copies wrap so the end meets the start - no jump - until the row is let go (another tab or page, the
+// picker closed, the menu closed). The present loop re-presents while it runs (g_ov.mqon, ov_panel sets it)
 static int g_mq_row = -1; static int64_t g_mq_ns; static int g_mq_drawn;
-static float mq_offset(uint64_t now, float overflow) {
-    float t = fmodf((float)(now - (uint64_t)g_mq_ns) / 1e9f, MQ_HOLD + MQ_SLIDE + MQ_GAP);
-    if (t < MQ_HOLD) return 0;
-    if (t < MQ_HOLD + MQ_SLIDE) return overflow * (t - MQ_HOLD) / MQ_SLIDE;
-    return overflow;
+static void mq_draw(const ov_canvas *cv, float x, float cy, const char *s, int scale, const uint8_t c[4], float room) {   // s scrolled inside x..x+room
+    float w = cv_text_w(s, scale), gap = room * 0.33f, period = w + gap;
+    float off = fmodf((float)(mono_ns() - (uint64_t)g_mq_ns) / 1e9f * room * 0.25f, period);
+    for (int k = 0; k < 8; k++) {
+        float cx = x - off + k * period;
+        if (cx >= x + room) break;
+        if (cx + w > x) cv_text_clip(cv, cx, cy, s, scale, c, x, x + room);
+    }
+    g_mq_drawn = 1;
 }
 static void ov_menu_icon(const ov_canvas *cv, const ov_ctl *c, const float b[4]) {   // the menu button: a dark pill with a ring and three bars
     static const uint8_t fill[4] = {20, 20, 26, 170}, ring[4] = {255, 255, 255, 210};
@@ -529,9 +531,8 @@ static void ov_menu_panel(const ov_canvas *cv, int st, int fg, const float p[4])
         float lw = lmax > rw * 0.15f ? lmax : rw * 0.15f, lx = r[0] + rh * 0.10f;
         cv_fit(lb, sizeof lb, full, is, lw);
         const uint8_t *lc = row == sel ? C_WHITE : C_DIM;
-        if (row == g_mq_row && g_mq_ns && cv_text_w(full, is) > lw) {   // a tapped row whose name does not fit scrolls
-            cv_text_clip(cv, lx - mq_offset(mono_ns(), cv_text_w(full, is) - lw), cy, full, is, lc, lx, lx + lw); g_mq_drawn = 1;
-        } else cv_text(cv, lx, cy, lb, is, lc);
+        if (row == g_mq_row && g_mq_ns && cv_text_w(full, is) > lw) mq_draw(cv, lx, cy, full, is, lc, lw);   // a tapped row whose name does not fit scrolls
+        else cv_text(cv, lx, cy, lb, is, lc);
         if (slider) {   // a slider: its track, filled to the value, the knob and the percent
             int val = it == OVM_OPACITY ? op : (st >> 13 & 7) * 25;
             float span = it == OVM_OPACITY ? (float)(OV_OPACITY_MAX - OV_OPACITY_MIN) : 100.0f, lvl = it == OVM_OPACITY ? (float)(op - OV_OPACITY_MIN) : (float)val;
@@ -627,13 +628,12 @@ static void ov_rows_panel(const ov_canvas *cv, int st, ov_srow rows[OVM_ROWS], c
         if (q->style == OVS_BUTTON) { float bh = rh * 0.60f, bw = fminf(rw, cv_text_w(q->left, is) + 4 * gap), bx = r[0] + (rw - bw) / 2;
             cv_rrect(cv, bx, cy - bh / 2, bx + bw, cy + bh / 2, bh / 2, row == sel ? C_ACCENT : C_OFF); cv_text(cv, bx + (bw - cv_text_w(q->left, is)) / 2, cy, q->left, is, C_WHITE); continue; }
         char left[80], right[40];
-        cv_fit(left, sizeof left, q->left, is, (x1 - x0) * 0.64f);
-        cv_fit(right, sizeof right, q->right, is, (x1 - x0) * 0.32f);
+        cv_fit(right, sizeof right, q->right, is, (x1 - x0) * 0.45f);   // the right side keeps its words (a master's "master code"), the name scrolls under it
+        float room = (x1 - x0) - (q->right[0] ? gap + cv_text_w(right, is) : 0);   // the name's slot: what the row shows before its right side (the marquee's clip too)
+        cv_fit(left, sizeof left, q->left, is, room);
         const uint8_t *lc = q->style == OVS_TITLE || row == sel ? C_WHITE : C_DIM;
-        float room = (x1 - x0) - (q->right[0] ? gap + cv_text_w(right, is) : 0);
-        if (row == g_mq_row && g_mq_ns && cv_text_w(q->left, is) > room) {   // a tapped name that does not fit scrolls
-            cv_text_clip(cv, x0 - mq_offset(mono_ns(), cv_text_w(q->left, is) - room), cy, q->left, is, lc, x0, x0 + room); g_mq_drawn = 1;
-        } else cv_text(cv, x0, cy, left, is, lc);
+        if (row == g_mq_row && g_mq_ns && cv_text_w(q->left, is) > room) mq_draw(cv, x0, cy, q->left, is, lc, room);   // a tapped name that does not fit scrolls
+        else cv_text(cv, x0, cy, left, is, lc);
         if (q->right[0]) cv_text(cv, x1 - cv_text_w(right, is), cy, right, is, C_DIM);
         if (q->style == OVS_TITLE) cv_rrect(cv, r[0], r[1] + rh - 1, r[0] + rw, r[1] + rh, 0.5f, C_LINE);
     }
